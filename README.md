@@ -4,8 +4,9 @@ An [Archipelago](https://archipelago.gg) multiworld implementation of
 **Shadow Man Remastered** (Nightdive Studios, 2021). This is the AP
 *world* — the plugin Archipelago's generator and client load to include
 Shadow Man in a multiworld. It's a sibling project to the standalone
-single-player randomizer (the `shadow-man-remastered-randomizer` repo)
-for the same game, sharing the same byte-level patching engine — see
+single-player randomizer (the
+[`shadow-man-remastered-randomizer`](https://github.com/bropacman/shadow-man-remastered-randomizer)
+repo) for the same game, sharing the same byte-level patching engine — see
 "How this differs from the standalone randomizer" below for where the
 two diverge.
 
@@ -22,8 +23,9 @@ confirmed dead.
 
 **Follow [the setup guide](guide_en.md), not this file, for install steps.**
 Short version: **use the Shadow Man Remastered AP Companion tool**
-(`ap_gui.py` in the `shadow-man-remastered-randomizer` repo) for both
-ends of this — its "Generate YAML" tab builds your player options file
+(`ap_gui.py` in the
+[`shadow-man-remastered-randomizer`](https://github.com/bropacman/shadow-man-remastered-randomizer)
+repo) for both ends of this — its "Generate YAML" tab builds your player options file
 without hand-editing YAML, and once you have your `.apshadowman` file
 from generation, its "Apply AP Seed" tab patches it onto your local game
 install. Editing a YAML by hand (or via the Archipelago website's
@@ -97,16 +99,32 @@ This world and the standalone tool share the same placement engine and
 byte-patching modules, but they're genuinely different products, not just
 two skins on one feature set:
 
-- **No barrel/weapon/lore/bonus "insanity" scope.** The standalone's
-  graded insanity tiers can also open weapon/lore/bonus/barrel slots as
-  fill targets (barrels alone would add ~2,085 locations). This world's
-  `insanity` option only covers Cadeaux locations — a deliberate, narrower
-  scope, not a missing port.
+- **No single graded "insanity tier" — the same ground is covered by
+  separate options instead.** The standalone's `insanity` setting is one
+  tiered toggle that progressively brings soul/govi, then cadeaux, then
+  weapon/lore/bonus/barrel slots into the fill pool. This world doesn't
+  have that one-tier system, but nothing from its scope is actually
+  missing here: weapon, lore, and Light Soul locations are already checks
+  whenever `shuffle_weapons`/`shuffle_lore`/`shuffle_bonus` are on (not
+  gated behind anything called "insanity"), cadeaux locations are covered
+  by `insanity` ("Cadeaux Key Items"), and barrel locations are covered by
+  `trap_bonus_count` (Secret Trap barrels get promoted into real,
+  reachable AP locations — see `locations.py`). Each is its own
+  independent option here rather than being folded into one tier ladder —
+  arguably this world's default location pool is already more expansive
+  than the standalone's, since Dark Souls/Govis/Gad Powers are always
+  shuffled with no vanilla-safe option at all.
 - **`cross_hub` entrance mode and `shuffle_prisms` aren't ported.**
   `deadside_only` entrance shuffle and piston combo randomization are.
-- **In-game tracker hints aren't available.** The standalone's
-  `patch_tracker` option has no AP equivalent — it was removed after
-  turning out to be a non-functional no-op on the AP side.
+- **In-game map tracker hints aren't available, but the client has its own
+  full tracker instead.** The standalone's `patch_tracker` option (which
+  rewrites in-game map badges) has no AP equivalent — it was removed after
+  turning out to be a non-functional no-op on the AP side. In its place,
+  the Shadow Man AP client (`client.py`) has a built-in game status
+  tracker — a "Proximity to Go Mode" overview showing goal prerequisites
+  and live Engine Block region reachability — plus full Universal Tracker
+  integration (location/logic tracking) when the `tracker.apworld` is
+  installed alongside this one.
 - **Gad Powers are always shuffled, with no "leave them at the temples"
   option.** The standalone's `--shuffle-gad-temples` flag genuinely works
   either way. This world used to expose the same choice, but its off-state
