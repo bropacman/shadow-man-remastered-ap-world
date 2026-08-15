@@ -14,7 +14,19 @@ no manual `!goal` needed.
 ## Installation
 
 1. Install Archipelago.
-2. Get a player YAML for this game. Easiest path: grab
+2. Install this world: download `shadowman.apworld` from
+   [this repo's releases page](https://github.com/bropacman/shadow-man-remastered-ap-world/releases)
+   and drop it into your Archipelago install's `custom_worlds` folder (or
+   use the Archipelago Launcher's own "Install APWorld" button, if it
+   has one).
+
+   While you're in there, it's worth also grabbing
+   [Universal Tracker](https://github.com/FarisTheAce/UniversalTracker)'s
+   `.apworld` and installing it the same way — entirely optional, but it
+   needs to already be installed the first time you launch the client for
+   its "Tracker Page" tab to show up (see "Tracking your progress" below),
+   so it's easiest to just grab both now rather than backfilling it later.
+3. Get a player YAML for this game. Easiest path: grab
    `shadow_man_ap_companion.exe` from the
    [shadow-man-remastered-randomizer releases page](https://github.com/bropacman/shadow-man-remastered-randomizer/releases)
    — a standalone Windows exe, no Python install needed — and use its
@@ -29,15 +41,15 @@ no manual `!goal` needed.
    or run the same tool from source (`ap_gui.py` in the
    shadow-man-remastered-randomizer repo) if you'd rather not use the
    prebuilt exe.
-3. Submit your YAML to the room you're generating (AP website multiworld
+4. Submit your YAML to the room you're generating (AP website multiworld
    generator, or your own local `Generate.py` run) like any other AP game.
    No local game install is needed for this step.
-4. After generation, download your output zip and find the file named
+5. After generation, download your output zip and find the file named
    `AP_<seed>_P<n>_<yourname>.apshadowman` inside it. This is a small JSON
    file — safe to share, contains no game files, just your placement data.
-5. Apply it to your game with the same AP Companion tool's "Apply AP Seed"
+6. Apply it to your game with the same AP Companion tool's "Apply AP Seed"
    tab (no separate install needed if you're already using the exe from
-   step 2):
+   step 3):
 
    ![AP Companion — Apply AP Seed tab](docs/screenshots/companion-apply-seed.png)
 
@@ -47,11 +59,11 @@ no manual `!goal` needed.
    ```
    python apply_ap_seed.py path/to/your.apshadowman --game-dir "C:/path/to/Shadow Man Remastered"
    ```
-6. This patches your local copy: writes a `thoth_x64_patched.exe`, installs
+7. This patches your local copy: writes a `thoth_x64_patched.exe`, installs
    a mod KPF, and writes a spoiler log / object map / soul threshold JSON
    into `<game-dir>/randomizer_output`. Launch `thoth_x64_patched.exe` (not
    the vanilla exe) to play your seed.
-7. Start and connect the client: open the Archipelago Launcher you already
+8. Start and connect the client: open the Archipelago Launcher you already
    have from installing Archipelago (Start Menu shortcut, or
    `ArchipelagoLauncher.exe` in your Archipelago install folder) and click
    **Shadow Man Remastered Client** from its list — this works the same
@@ -72,7 +84,7 @@ no manual `!goal` needed.
    own tracker tab) works fine either way; you'll just be missing the
    in-game popups.
 
-You can re-run step 5 any time — it always re-patches from the same
+You can re-run step 6 any time — it always re-patches from the same
 `.apshadowman` file, so nothing is lost if you reinstall or verify game
 files through Steam.
 
