@@ -1,0 +1,17 @@
+# ── Python ──
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# ── IDEs / editors ──
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── OS junk ──
+.DS_Store
+Thumbs.db
+desktop.ini

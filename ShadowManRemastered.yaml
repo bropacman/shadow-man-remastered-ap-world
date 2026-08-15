@@ -1,0 +1,5 @@
+name: TestPlayer
+description: Shadow Man Remastered Settings
+game: Shadow Man Remastered
+Shadow Man Remastered:
+  gate_preset: hard
