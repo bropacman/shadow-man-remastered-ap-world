@@ -281,7 +281,55 @@ VANILLA_EXE_NAME  = "thoth_x64.exe"
 # the AP server; the DLL only renders whatever we tell it to over a local
 # loopback socket. OVERLAY_IPC_PORT must match kIpcPort in dllmain.cpp.
 OVERLAY_DLL_NAME  = "ShadowManOverlay.dll"
-OVERLAY_DLL_PATH  = str(Path(__file__).parent / OVERLAY_DLL_NAME)
+
+
+def _resolve_overlay_dll_path() -> str:
+    """
+    Real, on-disk path to ShadowManOverlay.dll for _inject_overlay_dll()'s
+    LoadLibraryW-style injection -- which needs an actual file on disk no
+    matter what, since a DLL sitting inside a zip can't be loaded directly.
+
+    Path(__file__).parent works fine when this module is a plain file in a
+    real folder (every dev run so far -- straight out of worlds/shadowman/),
+    but breaks once this world ships as a packaged .apworld: Archipelago
+    loads those via zipimport, so __file__ resolves to a virtual path like
+    ...\\custom_worlds\\shadowman.apworld\\client.py with no real directory
+    for .parent to point at. Found 2026-08-15 testing the packaged .apworld
+    for the first time (as opposed to the flat dev folder) -- the DLL was
+    never missing, os.path.exists() on that virtual sibling path was just
+    always False, so _inject_overlay_dll() took its documented soft-failure
+    path (log + skip) every single time, silently.
+
+    Fix: try the flat-folder path first (unchanged behavior for normal dev
+    runs), and if that's not a real file, fall back to importlib.resources
+    -- which transparently handles both a plain directory package and a
+    zipimported one -- to read the DLL's bytes out of the package and write
+    them to a stable, content-hashed temp file. Hashing the extracted
+    filename means a rebuilt DLL with different bytes naturally gets a new
+    path instead of silently reusing a stale extraction, and repeat runs
+    with an unchanged DLL skip the rewrite entirely.
+    """
+    flat_path = Path(__file__).parent / OVERLAY_DLL_NAME
+    if flat_path.exists():
+        return str(flat_path)
+
+    try:
+        import importlib.resources as _resources
+        data = _resources.files(__package__).joinpath(OVERLAY_DLL_NAME).read_bytes()
+    except Exception:
+        # Let _inject_overlay_dll()'s own os.path.exists() check take over --
+        # same soft-failure log-and-skip behavior as before this fix existed.
+        return str(flat_path)
+
+    import tempfile
+    digest = hashlib.sha1(data).hexdigest()[:12]
+    extracted = Path(tempfile.gettempdir()) / f"ShadowManOverlay_{digest}.dll"
+    if not extracted.exists():
+        extracted.write_bytes(data)
+    return str(extracted)
+
+
+OVERLAY_DLL_PATH  = _resolve_overlay_dll_path()
 OVERLAY_IPC_PORT  = 31727
 
 # ── Memory addresses (RVA from exe base) ──────────────────────────────────────
