@@ -22,16 +22,17 @@ confirmed dead.
 ## Setup
 
 **Follow [the setup guide](guide_en.md), not this file, for install steps.**
-Short version: **use the Shadow Man Remastered AP Companion tool**
-(`ap_gui.py` in the
-[`shadow-man-remastered-randomizer`](https://github.com/bropacman/shadow-man-remastered-randomizer)
-repo) for both ends of this — its "Generate YAML" tab builds your player options file
-without hand-editing YAML, and once you have your `.apshadowman` file
-from generation, its "Apply AP Seed" tab patches it onto your local game
-install. Editing a YAML by hand (or via the Archipelago website's
-generator) and running `apply_ap_seed.py` directly still works if you'd
-rather script it, but the Companion tool is the easiest path for most
-players. No local game install is needed until the apply step.
+Short version: **use the Shadow Man Remastered AP Companion tool** for
+both ends of this — its "Generate YAML" tab builds your player options
+file without hand-editing YAML, and once you have your `.apshadowman`
+file from generation, its "Apply AP Seed" tab patches it onto your local
+game install. Grab `shadow_man_ap_companion.exe` from the
+[`shadow-man-remastered-randomizer` releases page](https://github.com/bropacman/shadow-man-remastered-randomizer/releases)
+— it's a standalone Windows exe, no Python install needed. Running
+`ap_gui.py` from source (or editing a YAML by hand / using the
+Archipelago website's generator plus `apply_ap_seed.py` directly) still
+works if you'd rather script it, but the released exe is the easiest path
+for most players. No local game install is needed until the apply step.
 
 ## What gets randomized
 
@@ -145,7 +146,32 @@ two skins on one feature set:
 See `AP_FEATURE_GAP.md` for the full, detailed audit history behind these
 gaps, including the real bugs found and fixed along the way.
 
+## Contributing
+
+Bug reports, seed pathology cases, and PRs welcome. When filing an issue,
+please include your YAML (or just the relevant options), the seed, and
+the spoiler log if one was generated — plus the exact `apply_ap_seed.py`
+command (or AP Companion tool steps) if the issue looks like it's on the
+patching side rather than generation.
+
+You can also reach me directly on Discord: bropacman
+
 ## Credits
 
 - Game by Nightdive Studios
-- Randomizer and AP world by the Shadow Man modding community
+- AP world by [bropacman](https://github.com/bropacman) and the Shadow Man
+  modding community
+
+## Disclaimer
+
+This is an unofficial fan-made tool and is not affiliated with, endorsed
+by, or sponsored by Nightdive Studios. Shadow Man Remastered is the
+property of Nightdive Studios.
+
+This tool requires a legitimate purchased copy of Shadow Man Remastered
+to function — no game assets are distributed. EXE patching is performed
+locally on the player's own installation via `apply_ap_seed.py`, exactly
+as it works for the standalone randomizer. Use at your own risk; verify
+your game files via Steam if you need to restore a clean install.
+
+This project is released under the [MIT License](https://github.com/bropacman/shadow-man-remastered-ap-world/blob/main/LICENSE).

@@ -14,32 +14,39 @@ no manual `!goal` needed.
 ## Installation
 
 1. Install Archipelago.
-2. Get a player YAML for this game. You can write one by hand (see
-   `options.py` in this world for every available setting, or the
-   Archipelago website's YAML generator), or use the Shadow Man Remastered
-   AP Companion tool (`ap_gui.py` in the shadow-man-remastered-randomizer
-   repo — "Generate YAML" tab) for a GUI with tooltips for every option and
-   a live YAML preview as you toggle things:
+2. Get a player YAML for this game. Easiest path: grab
+   `shadow_man_ap_companion.exe` from the
+   [shadow-man-remastered-randomizer releases page](https://github.com/bropacman/shadow-man-remastered-randomizer/releases)
+   — a standalone Windows exe, no Python install needed — and use its
+   "Generate YAML" tab for a GUI with tooltips for every option and a live
+   YAML preview as you toggle things:
 
    ![AP Companion — Generate YAML tab](docs/screenshots/companion-generate-yaml.png)
    ![AP Companion — live YAML preview](docs/screenshots/companion-yaml-preview.png)
+
+   You can also write a YAML by hand (see `options.py` in this world for
+   every available setting, or the Archipelago website's YAML generator),
+   or run the same tool from source (`ap_gui.py` in the
+   shadow-man-remastered-randomizer repo) if you'd rather not use the
+   prebuilt exe.
 3. Submit your YAML to the room you're generating (AP website multiworld
    generator, or your own local `Generate.py` run) like any other AP game.
    No local game install is needed for this step.
 4. After generation, download your output zip and find the file named
    `AP_<seed>_P<n>_<yourname>.apshadowman` inside it. This is a small JSON
    file — safe to share, contains no game files, just your placement data.
-5. Install the shadow-man-remastered-randomizer repo locally (this is where
-   the actual game patching happens) and run:
+5. Apply it to your game with the same AP Companion tool's "Apply AP Seed"
+   tab (no separate install needed if you're already using the exe from
+   step 2):
+
+   ![AP Companion — Apply AP Seed tab](docs/screenshots/companion-apply-seed.png)
+
+   Or, from source: install the shadow-man-remastered-randomizer repo
+   locally (this is where the actual game patching happens) and run:
 
    ```
    python apply_ap_seed.py path/to/your.apshadowman --game-dir "C:/path/to/Shadow Man Remastered"
    ```
-
-   or use the AP Companion tool's "Apply AP Seed" tab, which wraps the same
-   script with a file picker:
-
-   ![AP Companion — Apply AP Seed tab](docs/screenshots/companion-apply-seed.png)
 6. This patches your local copy: writes a `thoth_x64_patched.exe`, installs
    a mod KPF, and writes a spoiler log / object map / soul threshold JSON
    into `<game-dir>/randomizer_output`. Launch `thoth_x64_patched.exe` (not
