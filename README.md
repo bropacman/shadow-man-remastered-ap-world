@@ -146,6 +146,24 @@ two skins on one feature set:
 See `AP_FEATURE_GAP.md` for the full, detailed audit history behind these
 gaps, including the real bugs found and fixed along the way.
 
+## Known Issues
+
+- **This is a beta, solo-tested only.** No other players or multiworld
+  rooms yet — please report anything you hit (see Contributing below).
+- **Windows Smart App Control blocks the optional overlay popup DLL on a
+  clean Windows 11 install.** `ShadowManOverlay.dll` is unsigned, so a
+  system with Smart App Control on will block it from loading — this is a
+  Windows-level, all-or-nothing security setting with no per-app
+  exception, so the only fix on the player's end is turning Smart App
+  Control off (Windows Security → App & browser control → Smart App
+  Control) or switching it to Evaluation mode. This only affects the
+  in-game item popup toasts — the AP connection, location checks, and the
+  client's own tracker all work completely normally either way.
+- Cadeaux counting is not fully reliable — some cadeaux may not register
+  in-game depending on how they were placed. Lowering the altar cost and
+  Fogometers door from their defaults is recommended until this is
+  resolved.
+
 ## Contributing
 
 Bug reports, seed pathology cases, and PRs welcome. When filing an issue,

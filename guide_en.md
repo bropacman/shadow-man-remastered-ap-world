@@ -51,15 +51,49 @@ no manual `!goal` needed.
    a mod KPF, and writes a spoiler log / object map / soul threshold JSON
    into `<game-dir>/randomizer_output`. Launch `thoth_x64_patched.exe` (not
    the vanilla exe) to play your seed.
-7. Connect with the Archipelago client as usual once in-game. AP location
-   checks use a custom "Book of AP" item model in-world, distinct from
-   vanilla pickups:
+7. Start and connect the client: open the Archipelago Launcher you already
+   have from installing Archipelago (Start Menu shortcut, or
+   `ArchipelagoLauncher.exe` in your Archipelago install folder) and click
+   **Shadow Man Remastered Client** from its list — this works the same
+   way for everyone, no Python or source checkout needed, since it's just
+   Archipelago's own launcher recognizing this world. The AP Companion's
+   "Apply AP Seed" tab has the same thing built in too ("Launch Game +
+   Client" / "Launch Client Only") — it auto-detects a normal Archipelago
+   install, so those buttons should just work with nothing to configure;
+   if they're greyed out, set the Archipelago Checkout field above them to
+   wherever Archipelago lives on your PC. AP location checks use a custom
+   "Book of AP" item model in-world, distinct from vanilla pickups:
 
    ![A Book of AP location check in-game, with the client's recent-items log](docs/screenshots/in-game-book-of-ap.jpg)
+
+   That in-game popup and recent-items log come from an injected overlay
+   DLL — if Windows Smart App Control is on, it'll likely block it (see
+   Known Issues below). Everything else (checks, connection, the client's
+   own tracker tab) works fine either way; you'll just be missing the
+   in-game popups.
 
 You can re-run step 5 any time — it always re-patches from the same
 `.apshadowman` file, so nothing is lost if you reinstall or verify game
 files through Steam.
+
+## Known Issues
+
+- **This is a beta, solo-tested only** — please report anything odd (see
+  the README's Contributing section).
+- **Windows Smart App Control blocks the overlay popup DLL on a clean
+  Windows 11 install.** `ShadowManOverlay.dll` (the thing that draws the
+  in-game item popups and recent-items log shown above) is unsigned, so a
+  system with Smart App Control on will silently block it from loading —
+  you'll still get full location checks and tracking, just no in-game
+  popups. Smart App Control has no per-app exception (it's all-or-nothing
+  at the Windows level), so if you want the popups, either turn it off
+  entirely (Windows Security → App & browser control → Smart App Control
+  → Off — reversible without reinstalling Windows on an up-to-date
+  system) or switch it to Evaluation mode, which logs instead of blocking.
+- Cadeaux counting is not fully reliable — some cadeaux may not register
+  in-game depending on how they were placed. Lowering the altar cost and
+  Fogometers door from their defaults is recommended until this is
+  resolved.
 
 ## A few settings worth knowing about
 
