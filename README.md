@@ -3,11 +3,11 @@
 An [Archipelago](https://archipelago.gg) multiworld implementation of
 **Shadow Man Remastered** (Nightdive Studios, 2021). This is the AP
 *world* — the plugin Archipelago's generator and client load to include
-Shadow Man in a multiworld. It's a sibling project to, and shares its
-byte-level patching engine with, the standalone single-player randomizer
-(the `shadow-man-remastered-randomizer` repo) for the same game, but the
-two are built for different audiences and have diverged in real ways —
-see "How this differs from the standalone randomizer" below.
+Shadow Man in a multiworld. It's a sibling project to the standalone
+single-player randomizer (the `shadow-man-remastered-randomizer` repo)
+for the same game, sharing the same byte-level patching engine — see
+"How this differs from the standalone randomizer" below for where the
+two diverge.
 
 ## Goal
 
@@ -21,12 +21,15 @@ confirmed dead.
 ## Setup
 
 **Follow [the setup guide](guide_en.md), not this file, for install steps.**
-Short version: generate a YAML (by hand, via the Archipelago website's
-generator, or with the Shadow Man Remastered AP Companion tool in the
-`shadow-man-remastered-randomizer` repo), get your `.apshadowman` file
-from generation, then run `apply_ap_seed.py` (or the Companion tool's
-"Apply AP Seed" tab) against your local game install to patch it. No
-local game install is needed until that last step.
+Short version: **use the Shadow Man Remastered AP Companion tool**
+(`ap_gui.py` in the `shadow-man-remastered-randomizer` repo) for both
+ends of this — its "Generate YAML" tab builds your player options file
+without hand-editing YAML, and once you have your `.apshadowman` file
+from generation, its "Apply AP Seed" tab patches it onto your local game
+install. Editing a YAML by hand (or via the Archipelago website's
+generator) and running `apply_ap_seed.py` directly still works if you'd
+rather script it, but the Companion tool is the easiest path for most
+players. No local game install is needed until the apply step.
 
 ## What gets randomized
 
