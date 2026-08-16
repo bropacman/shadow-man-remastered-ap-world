@@ -107,30 +107,6 @@ files through Steam.
   Fogometers door from their defaults is recommended until this is
   resolved.
 
-## A few settings worth knowing about
-
-- `gate_preset`: controls coffin gate soul requirements
-  (story/easy/medium/hard/chaos).
-- `entrance_mode`: `deadside_only` shuffles which of the 9 Deadside portals
-  leads to which level.
-- `piston_combos`: randomizes the Dark Engine piston combinations; when on,
-  Jack's Schematic becomes required to learn them before reaching the final
-  boss.
-- `insanity` ("Cadeaux Key Items"): off (default) excludes all ~657
-  cadeaux (statue/altar) locations from the AP location pool entirely —
-  same treatment as barrels, no checks, no hints, no "Cadeaux" item in the
-  pool. On makes all of them real AP checks with no item-type restriction
-  (any item, including other players' key items, can land there). Soul/Govi
-  altar slots are unaffected either way — they've always been eligible for
-  any item.
-- `game_dir` no longer exists as an option — generation never touches your
-  local game files directly. All local patching happens in the separate
-  `apply_ap_seed.py` step above, regardless of whether you generated on the
-  AP website or locally.
-
-See `options.py` for the full list and detailed docstrings on every
-setting.
-
 ## Tracking your progress
 
 The Shadow Man AP client's own "Shadow Man" tab shows your overall status
