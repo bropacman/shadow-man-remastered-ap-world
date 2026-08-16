@@ -287,7 +287,14 @@ def compute_cadeaux_bundle_representatives(bundle_size: int, rng) -> dict[str, i
     # it (breaks AP's items-must-match-open-locations invariant). Filtering
     # to only location_table-eligible rows here keeps this function's count
     # exactly matching what _build_sub_regions() will really create.
-    eligible = lambda l: l.category == "cadeaux" and l.loc_key in location_table
+    # can_softlock (2026-08-15, Jon's request): never let a ledge/one-way-
+    # drop cadeaux row become a bundle representative (or, at bundle_size
+    # <= 1, a standalone real location) -- excluding it here at the source
+    # means it can never be picked as a chunk's representative in the first
+    # place, so no chunk ever silently loses its only real location. Same
+    # reasoning as the barrel candidate filter in __init__.py's
+    # generate_early() (search can_softlock there for the full writeup).
+    eligible = lambda l: l.category == "cadeaux" and l.loc_key in location_table and not l.can_softlock
 
     reps: dict[str, int] = {}
 

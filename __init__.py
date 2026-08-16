@@ -491,7 +491,15 @@ class ShadowManWorld(World):
         else:
             _barrel_raw_candidates = sorted(
                 (l for l in CHECKABLE_LOCS
-                 if l.category == "barrel" and l.source_file == "quest.rsc"),
+                 if l.category == "barrel" and l.source_file == "quest.rsc"
+                 # can_softlock (2026-08-15, Jon's request): excludes ledges/
+                 # one-way-drop spots from ever becoming real, pickable AP
+                 # locations here -- independent of set_rules()'s item-type
+                 # bans just below (those stop a required item from landing
+                 # on a barrel; this stops the barrel itself from being
+                 # somewhere collecting the check could physically strand the
+                 # player, regardless of what item ends up there).
+                 and not l.can_softlock),
                 key=lambda l: l.loc_key)
             _barrel_n = min(int(self.options.trap_bonus_count), len(_barrel_raw_candidates))
             _barrel_picked = round_robin_by_group(
@@ -1814,9 +1822,7 @@ class ShadowManWorld(World):
         config = {
             "shuffle_progression":   True,
             "gate_preset":           self.options.gate_preset.current_key,
-            # shuffle_gad_temples removed (2026-08-15, real correctness bug
-            # in its "off" state) -- gad temples are always shuffled now.
-            # See options.py's ShadowManOptions comment for the full story.
+            "shuffle_gad_temples":   bool(self.options.shuffle_gad_temples),
             "shuffle_weapons":       bool(self.options.shuffle_weapons),
             "shuffle_lore":          bool(self.options.shuffle_lore),
             "shuffle_bonus":         bool(self.options.shuffle_bonus),
