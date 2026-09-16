@@ -579,7 +579,7 @@ TITLE_SCREEN_5_RVA = 0x00F9738C  # int32
 # Partial mapping — only levels visited so far during live testing. Numbers
 # not in this table fall back to whatever current_level already held (save-
 # file value or last known live value), rather than being blanked out.
-# Extend as more are confirmed; see LIVE_MEMORY_TRACKING_NOTES.md.
+# Extend as more are confirmed; see docs/dev/LIVE_MEMORY_TRACKING_NOTES.md.
 LEVEL_NUMBER_TO_ID: Dict[int, str] = {
     0:  "swampday",
     1:  "tenement",
@@ -672,7 +672,7 @@ VTABLE_GIVE_OFF   = 0x30       # byte offset into vtable → GiveItem fn ptr
 FUN_459D50_RVA    = 0x459D50
 
 # Per-item possession array (kexShadowManInventoryLocal::GiveItem, reverse-
-# engineered 2026-07-18 — see LIVE_MEMORY_TRACKING_NOTES.md "inventory
+# engineered 2026-07-18 — see docs/dev/LIVE_MEMORY_TRACKING_NOTES.md "inventory
 # possession tracking" section and data/inventory_item_offsets.csv for full
 # methodology + all 30 confirmed slots). Each slot is a DWORD at
 # INVENTORY_RVA + 0x08 + (slot_index * 4): 0 = not owned, nonzero = owned.
@@ -834,7 +834,7 @@ LIGHT_SOUL_DEBOUNCE_TICKS = 3    # SUPERSEDED, see above.
 # CF_TRUEFORM_KILLED, CF_AI_LEGION_DEAD, CF_LEGION_KILLED_SHAD,
 # CF_LEGION_DEAD, CF_A2_TRUEFORM, CF_AS3_SCHISMSEEN/USED,
 # CF_AS4_LIGHTDOOR, CF_CATHEDRALSEEN, CF_BEENTO_*, etc.) -- see
-# LIVE_MEMORY_TRACKING_NOTES.md for the fuller catalog and index numbers.
+# docs/dev/LIVE_MEMORY_TRACKING_NOTES.md for the fuller catalog and index numbers.
 # These are a flat array of name-string pointers at 140ca2a90 (index 0 =
 # CF_INTRO_SCENE, 0x150/336 entries total, 8 bytes/entry, no adjacent
 # per-entry data field -- the array POSITION is the flag's only identity).
@@ -1413,7 +1413,7 @@ QUEST_STATE_OFF = 0x32   # bytes after class-name start  → state byte (0=not, 
 #   Confirmed live 2026-07-14 via Cheat Engine breakpoint + Ghidra Xref
 #   trace (FUN_1402dc040 -> kexShadowManDarkSoul::vftable, cross-checked
 #   against FUN_1402de490's *(param_1+0x30) dereference). See
-#   LIVE_MEMORY_TRACKING_NOTES.md for the full derivation.
+#   docs/dev/LIVE_MEMORY_TRACKING_NOTES.md for the full derivation.
 #
 # kexShadowManQuestObject (weapons/lore/progression/cadeaux) — partially
 # solved. Every live instance stores a shared Think()-callback pointer

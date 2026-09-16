@@ -139,8 +139,8 @@ two skins on one feature set:
   counterparts — the two are not meant to be identical files, unlike most
   of the small patch/randomizer modules they're built alongside.
 
-See `AP_FEATURE_GAP.md` for the full, detailed audit history behind these
-gaps, including the real bugs found and fixed along the way.
+See `docs/dev/AP_FEATURE_GAP.md` for the full, detailed audit history behind
+these gaps, including the real bugs found and fixed along the way.
 
 ## Known Issues
 
