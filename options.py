@@ -183,6 +183,19 @@ class ShuffleEnemiesSfx(Toggle):
     default = 0
 
 
+class CombineVoiceAndEnemySfx(Toggle):
+    """
+    If enabled, Shadow Man's voice lines and every enemy's sounds are
+    shuffled together as one shared pool, instead of shuffling separately.
+    Shadow Man can end up grunting with an enemy's pain sound, and an enemy
+    can end up screaming in Shadow Man's voice. Requires both Shuffle Voice
+    Lines and Shuffle Enemy SFX to also be enabled -- otherwise has no
+    effect. Cosmetic only.
+    """
+    display_name = "Shuffle Voice & Enemy SFX Together"
+    default = 0
+
+
 class ShuffleSky(Toggle):
     """
     If enabled, level skyboxes are shuffled between levels. Cosmetic only.
@@ -259,8 +272,8 @@ class CadeauxGatedContent(Toggle):
 
     Off (default): excluded from the AP location pool entirely — stays
     untouched/vanilla, same treatment as barrels and enemy checks. On: it
-    becomes a real AP check. Only meaningful when Insanity is also on
-    (Cadeaux is only an AP-tracked item then); with Insanity off the
+    becomes a real AP check. Only meaningful when Cadeauxsanity is also on
+    (Cadeaux is only an AP-tracked item then); with Cadeauxsanity off the
     location's own rule always passes, same as before this option existed.
 
     Renamed display_name (2026-07-28, Jon's request): the old name
@@ -475,7 +488,7 @@ class ProgressionBalancing(Range):
     default     = 50
 
 
-class Insanity(Toggle):
+class Cadeauxsanity(Toggle):
     """
     Controls whether cadeaux (statue/altar) locations exist as AP checks at
     all.
@@ -495,16 +508,22 @@ class Insanity(Toggle):
     tool's own graded "insanity" tiers, which can also open up weapon/lore/
     bonus/barrel slots (barrels alone would add ~2,085 more locations) —
     that broader mode isn't implemented here.
+
+    Renamed from "Insanity" to "Cadeauxsanity" (2026-08-23, Jon's request) —
+    the old name collided in conversation/docs with the standalone
+    randomizer's own, differently-scoped graded "insanity" tiers (see
+    above); this option only ever controlled cadeaux, so the name says so
+    now. Old YAMLs using `insanity:` need updating to `cadeauxsanity:`.
     """
-    display_name = "Cadeaux Key Items"
+    display_name = "Cadeauxsanity"
     default = 0
 
 
 class CadeauxBundleSize(Range):
     """
     Groups cadeaux pickups into a single AP check instead of one check per
-    cadeaux. Only meaningful when Insanity is also on (cadeaux locations
-    don't exist as AP checks at all otherwise).
+    cadeaux. Only meaningful when Cadeauxsanity is also on (cadeaux
+    locations don't exist as AP checks at all otherwise).
 
     GLOBAL bundling (redesigned 2026-07-28, Jon's explicit call after
     seeing ~87 scattered sub-size remainder bundles from the original
@@ -566,6 +585,29 @@ class PistonCombos(Toggle):
     item like any other.
     """
     display_name = "Piston Combo Randomizer"
+    default = 0
+
+
+class UniqueRetractorKeys(Toggle):
+    """
+    Splits the 5 Retractors (the items that let you teleport from Deadside
+    to a liveside region through its schism) into 5 distinctly-named items
+    -- one per liveside region -- instead of one fungible "Retractor" stack.
+
+    When enabled, each liveside region's schism requires its own specific
+    Retractor rather than any 5 of the shared stack: London needs
+    "Retractor - London", Prison needs "Retractor - Prison", and so on.
+    Each is placed by Fill like any other progression item (your own world
+    or another player's), so hints and other players' trackers show exactly
+    which retractor is where and which region it opens -- not just a
+    generic count. When off (default), all 5 liveside regions share the
+    vanilla flat "any 5 Retractors" requirement.
+
+    Ported from the standalone (non-AP) randomizer's own Unique Retractor
+    Keys feature (2026-08-18) -- same exe patch/save-flag enforcement, same
+    in-game Nettie's-file tracker.
+    """
+    display_name = "Unique Retractor Keys"
     default = 0
 
 
@@ -752,9 +794,10 @@ class ShadowManOptions(PerGameCommonOptions):
     shuffle_voices:        ShuffleVoices
     shuffle_weapons_sfx:   ShuffleWeaponsSfx  # was shuffle_weapon_sfx
     shuffle_enemies_sfx:   ShuffleEnemiesSfx
+    combine_voice_and_enemy_sfx: CombineVoiceAndEnemySfx
     shuffle_sky:           ShuffleSky
     progression_balancing: ProgressionBalancing
-    insanity:              Insanity
+    cadeauxsanity:         Cadeauxsanity
     cadeaux_bundle_size:   CadeauxBundleSize
     starting_health:       StartingHealth
     altar_health_grant:    AltarHealthGrant
@@ -766,6 +809,7 @@ class ShadowManOptions(PerGameCommonOptions):
     soul_threshold_mode:   SoulThresholdMode
     soul_logic_buffer:     SoulLogicBuffer
     piston_combos:         PistonCombos
+    unique_retractor_keys: UniqueRetractorKeys
     # patch_tracker (formerly "In-Game Tracker Hints" / GUI "Teddy Bear
     # Hints") removed 2026-08-05 per Jon: turning it on could break AP
     # seeds (ap_patcher.py never actually applied the accurate-hints

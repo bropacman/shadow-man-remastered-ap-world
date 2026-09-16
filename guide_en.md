@@ -116,7 +116,7 @@ files through Steam.
 - `piston_combos`: randomizes the Dark Engine piston combinations; when on,
   Jack's Schematic becomes required to learn them before reaching the final
   boss.
-- `insanity` ("Cadeaux Key Items"): off (default) excludes all ~657
+- `cadeauxsanity` (renamed from `insanity` 2026-08-23): off (default) excludes all ~657
   cadeaux (statue/altar) locations from the AP location pool entirely —
   same treatment as barrels, no checks, no hints, no "Cadeaux" item in the
   pool. On makes all of them real AP checks with no item-type restriction

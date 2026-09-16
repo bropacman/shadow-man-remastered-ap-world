@@ -15,3 +15,8 @@ __pycache__/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# ── Local runtime state / scratch (never ship or version these) ──
+ap_overlay_prefs.json
+_to_delete/
+_patcher.py.removed_*

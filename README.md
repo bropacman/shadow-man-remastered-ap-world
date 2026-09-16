@@ -65,7 +65,7 @@ randomized too. Full option list and detailed behavior notes live in
   deeper locations.
 - `piston_combos` — randomize the 6 Dark Engine piston combinations;
   makes Jack's Schematic required progression when on.
-- `insanity` ("Cadeaux Key Items") / `cadeaux_bundle_size` /
+- `cadeauxsanity` (renamed from `insanity` 2026-08-23) / `cadeaux_bundle_size` /
   `cadeaux_gated_content` ("Fog Door Check") — whether Cadeaux locations
   exist as AP checks at all, whether they're bundled into grouped checks,
   and whether the Fogometers Light Soul is included.
@@ -75,7 +75,7 @@ randomized too. Full option list and detailed behavior notes live in
 (+ `enemy_mode`, `enemy_mix_movement`, `enemy_uncap_counts`),
 `shuffle_true_forms`, `shuffle_ambients` (+ `ambient_mode`),
 `shuffle_music`, `shuffle_voices`, `shuffle_weapons_sfx`,
-`shuffle_enemies_sfx`, `shuffle_sky`.
+`shuffle_enemies_sfx`, `combine_voice_and_enemy_sfx`, `shuffle_sky`.
 
 **Gameplay tweaks (EXE patch — applied by `apply_ap_seed.py`, not at
 generation time)**
@@ -107,8 +107,10 @@ two skins on one feature set:
   have that one-tier system, but nothing from its scope is actually
   missing here: weapon, lore, and Light Soul locations are already checks
   whenever `shuffle_weapons`/`shuffle_lore`/`shuffle_bonus` are on (not
-  gated behind anything called "insanity"), cadeaux locations are covered
-  by `insanity` ("Cadeaux Key Items"), and barrel locations are covered by
+  gated behind an "insanity"-style tier), cadeaux locations are covered
+  by `cadeauxsanity` (this world's own option, renamed from `insanity`
+  2026-08-23 to avoid colliding with the standalone's term above), and
+  barrel locations are covered by
   `trap_bonus_count` (Secret Trap barrels get promoted into real,
   reachable AP locations — see `locations.py`). Each is its own
   independent option here rather than being folded into one tier ladder —

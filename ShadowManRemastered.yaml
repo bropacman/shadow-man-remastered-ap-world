@@ -72,15 +72,16 @@ Shadow Man Remastered:
   # Off (default): ~657 cadeaux locations are excluded entirely — no
   # checks, no hints, no "Cadeaux" item in the pool. On: they become real
   # AP checks with no item-type restriction (can hold anyone's key items).
-  insanity: false
+  cadeauxsanity: false
 
   # Groups cadeaux pickups into a single AP check instead of one per
-  # cadeaux (1-50). Only meaningful when insanity is also on. 1 (default)
-  # = no bundling. E.g. 5 turns ~657 individual checks into ~131 bundles.
+  # cadeaux (1-50). Only meaningful when cadeauxsanity is also on. 1
+  # (default) = no bundling. E.g. 5 turns ~657 individual checks into
+  # ~131 bundles.
   cadeaux_bundle_size: 1
 
   # Whether the Fogometers Light Soul location (SL10 + enough Cadeaux)
-  # exists as an AP check. Only meaningful when insanity is also on.
+  # exists as an AP check. Only meaningful when cadeauxsanity is also on.
   cadeaux_gated_content: false
 
   # ── Cosmetic / optional shuffles ─────────────────────────────────────
