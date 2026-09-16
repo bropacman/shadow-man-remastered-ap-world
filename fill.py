@@ -57,8 +57,6 @@ from pathlib import Path
 import random
 import sys
 
-sys.path.insert(0, str(Path(__file__).parent))
-
 from .extracted_locations import RAW_LOCATIONS, LOCATION_TABLE
 from .access_rules import R, GATE_VANILLA_SL, CAGEWAYS_ROUTES, PLAYROOMS_ROUTES
 from .constants import GATE_PRESETS
@@ -141,6 +139,21 @@ def apply_true_form_remap(loc_key_remap: dict[str, str] | None) -> list:
                 from .extracted_enemy_locations import ENEMY_TABLE
             except ImportError:
                 try:
+                    # Fallback for fill.py ever being run/imported outside
+                    # the worlds.shadowman package context (e.g. a bare dev
+                    # script) where the relative import above can't work.
+                    # Scoped to only this rare branch (2026-09-16) --
+                    # used to be an unconditional sys.path.insert at module
+                    # import time, which permanently put this directory at
+                    # sys.path[0] for the rest of the process. That broke
+                    # worlds/shadowman/test/'s own `from test.bases import
+                    # WorldTestBase` (a bare top-level `test` package)
+                    # every single time this world loaded, since Python
+                    # resolved `import test` against this directory's own
+                    # test/ subpackage before ever reaching the real
+                    # Archipelago-root test/ package.
+                    if str(Path(__file__).parent) not in sys.path:
+                        sys.path.insert(0, str(Path(__file__).parent))
                     from extracted_enemy_locations import ENEMY_TABLE
                 except ImportError:
                     raise ImportError(
