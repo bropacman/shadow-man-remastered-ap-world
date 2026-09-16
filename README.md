@@ -41,14 +41,8 @@ Calabash, Eclipser parts, Retractors, Accumulators, Gad Powers, Prison Key
 Card), plus whichever optional categories you enable: weapons, lore items,
 the Light Soul bonus, enemy types, ambient creatures, music, voice lines,
 and sound effects. Dark Souls, Govis, and Gad Powers are always shuffled
-into the item pool and placed by AP's own fill — there's no option to keep
-Gad Powers at their vanilla temple locations (an earlier "Shuffle Gad
-Temples" toggle existed but its off-state was a real bug, since removed;
-see the feature-gap section below). If you want Gad Powers guaranteed from
-the start instead of found through play, use AP's own Start Inventory From
-Pool for them in your YAML. Coffin gate soul requirements, in-game
-soul-level thresholds, Deadside
-portal connections, and Dark Engine piston combinations can all be
+into the item pool and placed by AP's own fill. Coffin gate soul requirements, in-game
+soul-level thresholds, Deadside portal connections, and Dark Engine piston combinations can all be
 randomized too. Full option list and detailed behavior notes live in
 `options.py` — this section just groups the highlights.
 
