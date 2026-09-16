@@ -187,7 +187,7 @@ from .locations import FRIENDLY_NAMES
 # cadeaux_item_weight() docstrings for the full cross-world rationale.
 # .items only imports BaseClasses, same "no circular import" safety as
 # .locations above.
-from .items import is_cadeaux_item, cadeaux_item_weight
+from .items import is_cadeaux_item, cadeaux_item_weight, RETRACTOR_KEY_ITEM_NAMES
 
 # pymem logs "Process X is being debugged" at INFO on every attach. With
 # watcher loops probing every second this floods the client GUI's log pane
@@ -199,12 +199,20 @@ logging.getLogger("pymem").setLevel(logging.WARNING)
 GAME_NAME      = "Shadow Man Remastered"
 POLL_INTERVAL  = 1.0
 
-# Dedicated fast-poll interval for ITEM_PICKUP_COUNTER_RVA only (2026-08-03,
-# see _fast_pickup_watcher_loop) -- deliberately much shorter than
-# POLL_INTERVAL so a pickup right next to a level-transition door can't
-# race a level change ahead of detection. Two cheap reads per tick (current
-# level, one uint counter) -- negligible overhead even at this cadence.
-FAST_PICKUP_POLL_INTERVAL = 0.15
+# Dedicated fast-poll interval for the low-latency live signals that don't
+# need a heap scan or file I/O (2026-08-03, see _fast_watcher_loop) --
+# deliberately much shorter than POLL_INTERVAL so a pickup right next to a
+# level-transition door can't race a level change ahead of detection.
+# Originally ITEM_PICKUP_COUNTER_RVA only; extended 2026-08-23 (Jon: "the
+# counters go up right away on getting [a dark soul] so figured we could
+# have the AP location sweep check at the same time") to also cover the
+# dark soul flag array / live soul counter, then the same day to also
+# cover the Light Soul completion flag (Jon: "i think the light soul
+# needs that instant poll check too") -- all are direct fixed-size memory
+# reads or plain flag-bit reads, same "no heap scan, no file I/O" cost
+# class as the pickup counter, so folding them into this loop costs
+# nothing extra per tick.
+FAST_POLL_INTERVAL = 0.15
 NUM_SAVE_SLOTS = 7
 
 # Minimum real wall-clock seconds since connecting before a Secret Trap is
@@ -737,6 +745,50 @@ PRISM_COUNT_RVA       = 0xF9C400   # WORD
 RETRACTOR_COUNT_RVA   = 0xF9C402   # WORD
 ACCUMULATOR_COUNT_RVA = 0xF9C404   # WORD
 
+# ── Unique Retractor Keys (2026-08-18) — per-item dedup ─────────────────────
+#
+# When this world's UniqueRetractorKeys option is on, items.py has no
+# fungible "Retractor" stack at all — instead 5 single-copy items, one per
+# liveside region (RETRACTOR_KEY_ITEM_NAMES). RETRACTOR_COUNT_RVA above is a
+# single shared counter the engine has no way to attribute to "which
+# specific retractor", so it can't back these 5 the way it backs plain
+# "Retractor" (see STACKABLE_GIVEITEM_COUNT_RVAS's own comment for that
+# mechanism, and the 7-Retractors bug it exists to prevent).
+#
+# Rather than invent 5 new counter RVAs the engine doesn't natively track,
+# this reuses the exact same save-backed CF_CUSTOM00-04 flags
+# unique_retractor_keys_patch.py's exe hooks (shadow-man-remastered-
+# randomizer repo — a SEPARATE checkout, no import possible) already
+# read/write for real per-portal gating, via this file's own
+# read_named_flag() (pure memory reads, already built for CF_GOT_LIGHTSOUL/
+# Legion detection — no new reverse-engineering needed). Confirmed with Jon
+# 2026-08-18 as the preferred approach specifically because it keeps
+# exe-side gating and AP-side dedup reading the exact same source of truth
+# instead of two counters that could drift apart.
+CF_CUSTOM_BASE_INDEX = 279   # must match unique_retractor_keys_patch.py's own
+                              # constant of the same name (separate repo)
+
+# world_id (1-5) per liveside region — duplicated from
+# unique_retractor_keys_patch.py's LIVESIDE_TO_IVAR1 (separate repo, same
+# "duplicate the literal across codebases, comment the source of truth"
+# convention this file already follows for other cross-repo constants).
+_RETRACTOR_REGION_TO_WORLD_ID: Dict[str, int] = {
+    "Mordant Street, Queens, NY":  1,
+    "Gardelle County Jail, Texas": 2,
+    "Down Street Station, London": 3,
+    "Summer Camp, Florida":        4,
+    "Salvage Yard, Mojave Desert": 5,
+}
+# {AP item name -> CF_* flag index}, built from items.py's
+# RETRACTOR_KEY_ITEM_NAMES (a real import, same package) combined with the
+# world_id table just above. read_named_flag(pm, base, this_index) returns
+# whether THIS SPECIFIC region's retractor has already been granted/used
+# this save — see RETRACTOR_KEY_ITEM_TO_CF_INDEX's two call sites below.
+RETRACTOR_KEY_ITEM_TO_CF_INDEX: Dict[str, int] = {
+    item_name: CF_CUSTOM_BASE_INDEX + _RETRACTOR_REGION_TO_WORLD_ID[region] - 1
+    for region, item_name in RETRACTOR_KEY_ITEM_NAMES.items()
+}
+
 # Light Soul injection — three internal calls replicated from FUN_140327410
 # (the givelightsoul handler guards on Cmd_Argc()==2 so cannot be called bare)
 LIGHT_SOUL_SETUP_RVA    = 0x2EA6F0   # FUN_1402ea6f0() — setup, no args
@@ -1116,6 +1168,17 @@ AP_ITEM_INJECTION: Dict[str, Tuple[str, Optional[int]]] = {
     "Dark Soul":              ("soul",       None),
     "Gad Power":              ("gad",        1),      # one of the 3 real Gad Temples
     "Retractor":              ("give_item",  0x17),
+    # Unique Retractor Keys (2026-08-18) — all 5 named items give the exact
+    # same native GiveItem(0x17) as plain "Retractor": world identity is
+    # 100% flag/position-based (CF_CUSTOM00-04, RETRACTOR_KEY_ITEM_TO_CF_INDEX
+    # above), never RSC/give-item-id based, matching the design already used
+    # by items.py's AP_ITEM_TO_RSC (all 5 -> RSC_X_RETRACT) and the exe
+    # patch itself.
+    "Retractor - London":     ("give_item",  0x17),
+    "Retractor - Prison":     ("give_item",  0x17),
+    "Retractor - Florida":    ("give_item",  0x17),
+    "Retractor - Salvage":    ("give_item",  0x17),
+    "Retractor - Queens":     ("give_item",  0x17),
     "Accumulator":            ("give_item",  0x01),
     "Cadeaux":                ("cadeaux",    0x05),   # GiveItem(0x05) flag + direct write to CADEAUX_COUNT_RVA — see its comment above
 
@@ -1229,8 +1292,10 @@ def _build_sim_mixed_backlog(n: int) -> List[str]:
 
 # ── KSAV / SACT parsing ───────────────────────────────────────────────────────
 
-GOVI_CLASS     = b"kexShadowManAIGovi\x00"
-GOVI_STATE_OFF = 0x9D   # bytes after class-name start  → state byte (0=intact, 1=opened)
+# GOVI_CLASS / GOVI_STATE_OFF (kexShadowManAIGovi class-name + state-byte
+# offset) REMOVED (2026-08-23) alongside _parse_govi_states() — see that
+# function's old site (now a breadcrumb comment below) and
+# _poll_save_folder's own comment for the full writeup.
 SACT_SOUL_OFF  = 0x31   # uint32 LE: dark soul count in user_activity.dat
 
 # GOVI_IID_BACK (the old "instance_id 8 bytes before class name" assumption,
@@ -1514,29 +1579,20 @@ def _find_save_dir() -> Optional[Path]:
     return None
 
 
-def _parse_govi_states(save_bytes: bytes) -> Dict[int, int]:
-    """
-    Return {file_pos: state} for every kexShadowManAIGovi occurrence, keyed
-    by the class-name occurrence's OWN file offset.
-
-    file_pos is used as a stable per-object key for diffing "newly opened"
-    state across polls within one client session — it is NOT an
-    instance_id (there is no usable one for Govi records). Position/location
-    identity for newly-opened records is resolved separately, on demand, by
-    _match_govi_position_scan — see its docstring for why a fixed offset
-    doesn't work here.
-    """
-    states: Dict[int, int] = {}
-    pos = 0
-    while True:
-        p = save_bytes.find(GOVI_CLASS, pos)
-        if p == -1:
-            break
-        s_pos = p + GOVI_STATE_OFF
-        if s_pos < len(save_bytes):
-            states[p] = save_bytes[s_pos]
-        pos = p + len(GOVI_CLASS)
-    return states
+# _parse_govi_states() REMOVED (2026-08-23, Jon's report of free/phantom
+# location checks around true-form releases and boss cutscenes) — it
+# diffed Govi open/closed state keyed by file_pos (raw save-file byte
+# offset, the only key available -- Govi records have no real instance_id,
+# see GOVI_IID_BACK's comment above), which drifts whenever an earlier
+# part of the save file changes size, spuriously relabeling long-since-
+# opened Govis as "new" flips at their shifted offsets. See
+# _poll_save_folder's own comment (where this used to be called) for the
+# full writeup. GOVI_CLASS/GOVI_STATE_OFF (above) were only ever used to
+# locate Govi occurrences for THIS scan -- removed alongside it, since
+# _match_govi_position_scan below takes an already-found class_pos as a
+# parameter and never needed them itself (its callers now only ever pass
+# QuestObject-sourced positions, reusing the Govi tolerance window as a
+# calibration hypothesis -- see that function's own docstring).
 
 
 def _match_govi_position_scan(
@@ -1651,7 +1707,8 @@ def _parse_quest_states(save_bytes: bytes) -> Dict[int, int]:
     cadeaux containers.  The instance_id matches patcher.py's INSTANCE_OFF byte
     read from rsc_data[name_offset − 1] in the level's quest.rsc.
 
-    Same class-name-scanning approach as _parse_govi_states, but
+    Same class-name-scanning approach the old _parse_govi_states used
+    (removed 2026-08-23 — see its breadcrumb comment above), but
     QuestObject DOES have a reliable instance_id (unlike Govi):
         instance_id  at  class_name_start − QUEST_IID_BACK   (uint32 LE)
         state byte   at  class_name_start + QUEST_STATE_OFF
@@ -3660,17 +3717,28 @@ def apply_ammo_drain(pm, base: int) -> bool:
     return ok
 
 
-def apply_ammo_fill(pm, base: int) -> bool:
+def apply_ammo_fill(pm, base: int, log: bool = True) -> bool:
     """
     One-shot fill of all three tracked ammo pools to their known max
     (see AMMO_RVAS_AND_CAPS) — the instant-refill half of the Ammo Max
     Hold effect, also usable standalone.
+
+    log (2026-08-23, Jon's report — /debug off didn't actually stop the
+    spam): this function's own per-pool "Ammo Fill: X -> Y" lines are a
+    SEPARATE source from _run_ammo_max_hold's outer per-tick summary line
+    -- gating only that outer line (the original /debug fix) left these
+    three inner lines still firing every tick, unconditionally, since this
+    is a plain module-level function with no access to
+    self.debug_hold_logging on its own. Defaults to True so any other/
+    future one-shot caller keeps logging by default (there happens to be
+    only the one call site today, _run_ammo_max_hold, which now passes
+    log=self.debug_hold_logging explicitly).
     """
     ok = True
     for name, (rva, cap) in AMMO_RVAS_AND_CAPS.items():
         if not set_ammo(pm, base, rva, cap):
             ok = False
-        else:
+        elif log:
             logger.info(f"[ShadowMan] Ammo Fill: {name} -> {cap}")
     return ok
 
@@ -3912,6 +3980,64 @@ def read_named_flag(pm, base: int, index: int) -> Optional[bool]:
     except Exception as exc:
         logger.warning(f"[ShadowMan] read_named_flag(index={index}) failed: {exc}")
         return None
+
+
+def write_named_flag(pm, base: int, index: int) -> bool:
+    """
+    Set a CF_* named completion/cutscene flag by its array index — the
+    write-side counterpart to read_named_flag() above.
+
+    Added 2026-08-18 for the Unique Retractor Keys REMOTE-grant path (Jon's
+    live repro caught the gap: "does it know if the retractor is in a
+    different game that's okay? it will be injected from our client").
+    unique_retractor_keys_patch.py's own Hook B (pickup-side) only ever
+    sets CF_CUSTOM00-04 when a NATIVE physical pickup happens in THIS
+    player's own world — it's woven into the game's native pickup handler
+    (case D_17), which only runs for a real in-world interaction. A named
+    retractor key whose location Fill placed in ANOTHER player's game
+    reaches this player purely over the AP network — this file's own
+    "give_item" injection calls the vanilla GiveItem vtable method
+    directly (see AP_ITEM_INJECTION's comment), a completely different
+    code path than the one Hook B patches into. Without this function, a
+    remotely-received named key would show as "have it" in AP's own
+    inventory/logic forever, while the corresponding schism's exe-side
+    gate (which checks CF_CUSTOM via GetFlag, not AP state) would stay
+    permanently locked in that player's game — the item would be granted,
+    but nothing in-game would ever actually unlock.
+
+    Pure memory write (read-modify-write OR the correct bit into the same
+    packed bit array read_named_flag() reads), no code injection needed —
+    safe specifically for CF_CUSTOM00-04 because unique_retractor_keys_
+    patch.py's own PERSISTENCE comment (Jon's Ghidra decompile of the real
+    SetFlag, FUN_14033ee50) already confirmed that function has NO side
+    effects beyond the bit-set itself for any index outside its internal
+    special-case switch range [26, 193] — every CF_CUSTOM* index is 279+,
+    well clear of that range, so a raw bit-set here is provably equivalent
+    to what a real SetFlag(this, index) call would do. Do NOT reuse this
+    approach for any flag index inside [26, 193] without re-verifying that
+    assumption against the same decompile.
+
+    Returns False (and logs) on any pymem read/write failure, same
+    "couldn't confirm this poll, treat as not-yet-set" convention as
+    read_named_flag()'s own None return — callers should treat a False
+    here as "not confirmed," not as fatal; both call sites below run on
+    the same connect/backlog-replay machinery as every other grant, so a
+    transient failure here gets another chance on the next reconnect or
+    replay pass rather than being silently permanent.
+    """
+    try:
+        bits_ptr = pm.read_longlong(base + CF_FLAG_OBJ_RVA + CF_FLAG_BITS_PTR_OFF)
+        if not bits_ptr:
+            return False
+        byte_addr = bits_ptr + (index >> 3)
+        bit = 1 << (index & 7)
+        cur = pm.read_uchar(byte_addr)
+        if not (cur & bit):
+            pm.write_uchar(byte_addr, cur | bit)
+        return True
+    except Exception as exc:
+        logger.warning(f"[ShadowMan] write_named_flag(index={index}) failed: {exc}")
+        return False
 
 
 def _live_gad_temple_tier(pm, base: int) -> int:
@@ -4549,7 +4675,8 @@ class ShadowManCommandProcessor(SuperCommandProcessor):
                          /healme, /drainvoodoo, /maxvoodoo, /drainammo,
                          /maxammo
       Advanced/debug:   /secret, /checksecrets, /checkcallbacks,
-                         /resetsecrets, /pollerstatus, /console, /itemspeed
+                         /resetsecrets, /pollerstatus, /console, /itemspeed,
+                         /debug
 
     The "testing effects" and "advanced/debug" commands are development
     tools, not something you need for normal play — they exist so effects
@@ -5000,6 +5127,32 @@ class ShadowManCommandProcessor(SuperCommandProcessor):
                 return
         self.ctx.start_ammo_max_hold(total_seconds=seconds)
 
+    def _cmd_debug(self, *args: str) -> None:
+        """
+        Show or toggle verbose per-tick logging for Voodoo/Ammo Max Hold
+        (the "tick N/M: ok — cap=..." lines these two effects emit every
+        HEALTH_EFFECT_TICK_INTERVAL_SECONDS while active). Off by default —
+        those lines are development/debug noise during normal play,
+        especially with Trap/Bonus's permanent holds running for a while.
+        Session-only: resets to off on every client launch.
+        Usage: /debug [on|off]   (no argument shows current state)
+        """
+        ctx = self.ctx
+        if not args:
+            state = "on" if ctx.debug_hold_logging else "off"
+            logger.info(f"[ShadowMan] Voodoo/Ammo Max Hold tick logging: {state}")
+            return
+        choice = args[0].strip().lower()
+        if choice in ("on", "true", "1"):
+            ctx.debug_hold_logging = True
+        elif choice in ("off", "false", "0"):
+            ctx.debug_hold_logging = False
+        else:
+            logger.warning("[ShadowMan] Usage: /debug [on|off]")
+            return
+        logger.info(f"[ShadowMan] Voodoo/Ammo Max Hold tick logging: "
+                    f"{'on' if ctx.debug_hold_logging else 'off'}")
+
 
 # ── Main context ───────────────────────────────────────────────────────────────
 
@@ -5023,9 +5176,6 @@ class ShadowManContext(SuperContext):
     # Save folder
     save_dir: Optional[Path]
 
-    # Per-slot govi state snapshots (keyed by class-name file offset, NOT
-    # instance_id — see _match_govi_position_scan) and file mtimes
-    _slot_govi_states:  Dict[int, Dict[int, int]]
     # Per-slot kexShadowManQuestObject state snapshots (all quest.rsc pickups)
     _slot_quest_states: Dict[int, Dict[int, int]]
     # Per-slot kexShadowManQuestObject state snapshots keyed by file_pos
@@ -5221,6 +5371,11 @@ class ShadowManContext(SuperContext):
     # Whether this seed's piston_combos option is on — from slot_data on
     # Connected (see on_package). Defaults False until then.
     piston_combos_on: bool
+    # Whether this seed's Unique Retractor Keys option is on (2026-08-18) —
+    # from slot_data on Connected, same pattern as piston_combos_on. Used by
+    # _go_mode_prerequisites() to show the 5 named keys individually instead
+    # of the flat "Retractors x/5" count.
+    unique_retractor_keys_on: bool
     # Last level we re-asserted gad power flags for (see _poll_live_memory's
     # level-transition block, 2026-07-25) — None means "not yet synced this
     # session", not "no level".
@@ -5287,7 +5442,6 @@ class ShadowManContext(SuperContext):
                  password: Optional[str]) -> None:
         super().__init__(server_address, password)
         self.save_dir             = _find_save_dir()
-        self._slot_govi_states    = {}
         self._slot_quest_states   = {}
         self._slot_questobj_pos_states = {}
         self._slot_mtimes         = {}
@@ -5336,6 +5490,7 @@ class ShadowManContext(SuperContext):
         self._ut_in_logic_regions = set()
         self._ut_in_logic_locations = set()
         self.piston_combos_on     = False
+        self.unique_retractor_keys_on = False
         self._last_gad_resync_level = None
         self.trap_bonus_mode     = "always_temporary"
         self.trap_bonus_duration = 60
@@ -5358,6 +5513,16 @@ class ShadowManContext(SuperContext):
         self._active_health_effect_kind = None
         self._active_voodoo_hold_task = None
         self._active_ammo_hold_task = None
+        # Voodoo/Ammo Max Hold per-tick logging (2026-08-23, Jon's request):
+        # off by default -- the "tick N/M: ok — cap=..." lines these two
+        # holds emit every HEALTH_EFFECT_TICK_INTERVAL_SECONDS were cluttering
+        # the log during normal play (Trap/Bonus's permanent holds can run
+        # for a long time). Session-only toggle via /debug, same pattern as
+        # every other runtime-only flag here (e.g. trap_bonus_*_enabled
+        # above) -- no persistent config file exists in this client, and
+        # this wasn't judged worth adding one just for a log-verbosity knob.
+        # Resets to False every launch.
+        self.debug_hold_logging = False
 
         # Universal Tracker region/location callbacks (2026-07-25) — see
         # docs/client-integration.md's "Adding In-Logic Callbacks" section.
@@ -5544,6 +5709,10 @@ class ShadowManContext(SuperContext):
                 f"[ShadowMan] slot_data['piston_combos']={slot_data.get('piston_combos')!r} "
                 f"-> piston_combos_on={self.piston_combos_on}"
             )
+            # Unique Retractor Keys (2026-08-18) — same plain-bool slot_data
+            # pattern as piston_combos_on just above (see fill_slot_data()'s
+            # matching write in __init__.py).
+            self.unique_retractor_keys_on = bool(slot_data.get("unique_retractor_keys", False))
             # Trap/Bonus (2026-08-01, renamed + generalized from "Secret
             # Trap" 2026-08-03) — see options.py's TrapBonusMode/
             # TrapBonusDuration/TrapBonus{Secrets,Health,Voodoo,Ammo}Enabled
@@ -5793,7 +5962,6 @@ class ShadowManContext(SuperContext):
                 f"acting on mismatched data.")
             return
 
-        new_govi  = _parse_govi_states(sav_bytes)
         new_quest = _parse_quest_states(sav_bytes)
 
         if level:
@@ -5803,80 +5971,51 @@ class ShadowManContext(SuperContext):
         # The AP-item-marker position-scan below is a FALLBACK: the live
         # pickup-log mechanism (BOOKPOS_LOG_BASE_RVA in _poll_live_memory)
         # covers marker pickups whenever the game is hooked. The baseline
-        # dicts (new_govi / new_qpos) are still recomputed and cached every
-        # poll regardless of this flag, so if live memory later drops out
+        # dict (new_qpos) is still recomputed and cached every poll
+        # regardless of this flag, so if live memory later drops out
         # mid-session the fallback won't wrongly treat pre-existing state
         # as "newly opened."
         pm, base = _get_process()
         live_memory_available = pm is not None and base is not None
 
-        # ── Govi (dark soul) check — ALWAYS runs (2026-07-19 fix) ──────────────
-        # This scan was briefly gated behind "not live_memory_available" on
-        # the assumption the live paths covered it. They DON'T for a Dark
-        # Soul retyped onto a non-soul slot (confirmed live: soul collected
-        # at a key-item location produced no check while hooked):
-        #   - the pickup event log does NOT increment on dark souls,
-        #   - the dark-soul flag array's index is the placed object's
-        #     reward id = the TARGET slot's save_idx (see generate_output's
-        #     synthetic raw), which is 0 for most key-item slots (skipped
-        #     by _loc_map) and in the quest namespace otherwise,
-        #   - the retyped slot is an AIGovi, not a QuestObject, so the
-        #     quest-transition save-repoll nudge never fires for it.
-        # The double-message concern that motivated the gate is already
-        # handled by the locations_checked dedupe in
-        # _send_location_checks_ap_ids — a govi the live flag array
-        # resolved first is simply skipped here.
+        # ── Govi (dark soul) save-file position-scan — REMOVED (2026-08-23,
+        # Jon's report: "[ShadowMan] Save-file Govi check: 2 govi
+        # state-flip(s) resolved to ap_ids=[...]... giving free location
+        # checks for locations the user hasn't reached yet", specifically
+        # around true-form releases and boss cutscenes).
         #
-        # Keyed by file_pos (the class-name occurrence's own offset), NOT
-        # instance_id. Location identity for each newly-opened record is
-        # resolved by a per-occurrence position scan below (see
-        # _match_govi_position_scan — a single fixed offset doesn't work
-        # across all records/levels).
-        prev_govi = self._slot_govi_states.get(active_slot, {})
-        self._slot_govi_states[active_slot] = new_govi
-
-        newly_opened_ap_ids: List[int] = []
-        for file_pos, state in new_govi.items():
-            if state != 1:
-                continue
-            if prev_govi.get(file_pos, 0) == 1:
-                continue
-            ap_id, position = _match_govi_position_scan(
-                sav_bytes, file_pos, level, self._govi_pos_index)
-            if ap_id is None:
-                logger.warning(
-                    f"[ShadowMan] No AP location matched Govi at file "
-                    f"offset {file_pos:#x} (level={level!r}) — scanned "
-                    f"offsets [{GOVI_POS_SCAN_MIN}, {GOVI_POS_SCAN_MAX}], "
-                    f"no position within {GOVI_POS_TOLERANCE} units of a "
-                    f"known location.")
-                continue
-            newly_opened_ap_ids.append(ap_id)
-
+        # Root cause: this scan keyed newly-opened Govi records by file_pos
+        # — the class-name occurrence's raw BYTE OFFSET within the save —
+        # not any stable per-object id (Govi records genuinely have none,
+        # see GOVI_IID_BACK's comment above). A story beat like a true-form
+        # release or boss cutscene can rewrite enough of the save file's
+        # earlier content to shift every LATER Govi record's file_pos.
+        # Every shifted record then looks like a brand-new 0->1 flip at its
+        # new offset (prev_govi has no entry there), even for Govi shells
+        # the player opened long ago — and _match_govi_position_scan's own
+        # fuzzy position/tolerance matching (there's no exact per-object id
+        # to check against) can then resolve that phantom "flip" against
+        # ANY nearby AP location within tolerance, not necessarily the real
+        # one, or even one the player has ever been near. Exactly the "free
+        # checks for unreached locations" Jon reported.
+        #
+        # This scan was the only path that could resolve a Dark Soul
+        # retyped onto a non-soul slot (see _process_darksoul_watch's
+        # unresolved_flip nudge, which used to call into this via
+        # _poll_save_folder) -- removing it reopens that narrow gap. Traded
+        # off deliberately: silently granting wrong checks for unvisited
+        # locations is a worse multiworld-integrity problem than one rare
+        # pickup type occasionally needing a manual /siminject or a later
+        # fix, and every OTHER pickup type (regular items, dark souls in
+        # their own slot, quest.rsc progression/weapons/lore below) is
+        # fully covered by the live-memory paths + the QuestObject
+        # instance_id-keyed check right below, neither of which shares this
+        # file_pos-drift flaw. self.last_soul_count still gets updated from
+        # SACT below so /status and other soul-count displays stay current
+        # -- only the position-scan-based CHECK-SENDING was removed.
         souls_gained = sact_soul - self.last_soul_count
-        # (2026-07-19) Confirmed with real data that the two signals here —
-        # govi state flips read from the .sav bytes, and the SACT running
-        # soul-count — do NOT reliably update in the same poll cycle (live
-        # example: "1 govi state-flip resolved to ap_ids=[...], sact_soul=2,
-        # last_soul_count=2, souls_gained=0" — a real, position-resolved
-        # check that the old code silently dropped because SACT hadn't
-        # caught up yet this poll). Position resolution (_match_govi_position_scan,
-        # with its own ambiguity-rejection) is already the real correctness
-        # check here — requiring SACT to also agree in the SAME poll only
-        # adds false negatives, not real protection. The live-memory Govi
-        # path (_poll_live_memory) never had this requirement and has been
-        # reliable; save-file path now matches it for consistency.
-        if newly_opened_ap_ids or souls_gained != 0:
-            logger.info(
-                f"[ShadowMan] Save-file Govi check: {len(newly_opened_ap_ids)} "
-                f"govi state-flip(s) resolved to ap_ids={newly_opened_ap_ids}, "
-                f"sact_soul={sact_soul}, last_soul_count={self.last_soul_count}, "
-                f"souls_gained={souls_gained}."
-            )
         if souls_gained > 0:
             self.last_soul_count = sact_soul
-        if newly_opened_ap_ids:
-            await self._send_location_checks_ap_ids(newly_opened_ap_ids)
 
         # ── QuestObject (quest.rsc items: progression, weapons, lore) ──────────
         prev_quest = self._slot_quest_states.get(active_slot, {})
@@ -5957,10 +6096,10 @@ class ShadowManContext(SuperContext):
         self._govi_pos_index for the given `level`.
 
         Factored out of _poll_live_memory (2026-08-03) so it can also be
-        driven by _fast_pickup_watcher_loop, a separate loop with a much
-        shorter sleep than POLL_INTERVAL's 1.0s. Jon's report: an AP item
-        sitting right next to a level-transition door can be picked up and
-        the door walked through in under a second — faster than the main
+        driven by _fast_watcher_loop, a separate loop with a much shorter
+        sleep than POLL_INTERVAL's 1.0s. Jon's report: an AP item sitting
+        right next to a level-transition door can be picked up and the
+        door walked through in under a second — faster than the main
         once-a-second sweep gets back around to noticing the counter moved.
         Since position-matching is filtered by the CURRENT level (see
         _match_live_position's `lvl != level` check), a poll that only
@@ -5972,7 +6111,7 @@ class ShadowManContext(SuperContext):
         level it happened in (see BOOKPOS_LOG_BASE_RVA's structure notes).
         A short, cheap, dedicated poll loop shrinks that race window from
         "up to ~1s" (anything within POLL_INTERVAL) down to "up to
-        FAST_PICKUP_POLL_INTERVAL" (a fraction of a second), rather than
+        FAST_POLL_INTERVAL" (a fraction of a second), rather than
         needing the entries to self-describe their own level (which the
         game's own record format doesn't provide).
 
@@ -6072,25 +6211,199 @@ class ShadowManContext(SuperContext):
 
         self._live_item_pickup_count = pickup_count
 
-    async def _fast_pickup_watcher_loop(self) -> None:
+    async def _process_darksoul_watch(self, pm, base, level: Optional[str]) -> None:
         """
-        Dedicated fast poll for ITEM_PICKUP_COUNTER_RVA only (2026-08-03,
-        Jon: "for AP items that are close to level transitions, we can
-        lose detecting an AP pickup if we switch levels before a poll...
-        can we still have the pickup counter incrementing trigger an
-        instant poll check"). Runs alongside _memory_watcher_loop, not
-        instead of it — that loop still does everything else (dark soul
-        flags, govi save-state, gad/poigne resync, secret poller
-        forensics, etc.) at the normal POLL_INTERVAL cadence; there's no
-        urgency for any of that.
+        Read the dark soul collected-flag array (DARKSOUL_FLAGARRAY_PTR_RVA
+        — array index == save_idx directly, no heap scan needed) and
+        SOUL_COUNT_RVA (increments on every dark soul collection, including
+        ones the flag array can't resolve — see below), resolving any
+        newly-flipped save_idx against self._loc_map and nudging a save-file
+        re-poll for anything the flag array alone can't identify.
 
-        This loop does only two cheap reads per tick (current level,
-        pickup counter) and, on an increment, calls the exact same
-        _process_pickup_log used by the main sweep — see that method's
-        docstring for why level must be read fresh at detection time
-        rather than reused from the main loop's own (potentially stale-
-        by-now) snapshot, and for why calling it from two loops
-        concurrently is safe with no lock.
+        Factored out of _poll_live_memory (2026-08-23, Jon: "the counters
+        go up right away on getting [a dark soul] so figured we could have
+        the AP location sweep check at the same time") so it can also be
+        driven by _fast_watcher_loop, the same shorter-interval loop
+        _process_pickup_log uses — see that method's docstring for the
+        general reasoning (level read fresh at detection time, safe to call
+        from two loops concurrently with no lock). Previously this block
+        only ran on the once-a-second _memory_watcher_loop cadence, so a
+        dark soul flip could sit unnoticed for up to ~1s even though the
+        in-game soul counter itself updates instantly — same class of gap
+        FAST_POLL_INTERVAL already closed for regular AP-item pickups.
+
+        Baseline state (self._darksoul_flags_prev / self._live_soul_count)
+        is advanced BEFORE the awaits below, not after — mirrors
+        _process_pickup_log's self._bookpos_next_index ordering, so that if
+        both loops happen to observe the same flip, whichever runs first
+        claims it synchronously and the other sees nothing new by the time
+        it gets to compare. Any residual double-detection either loop
+        ordering can't fully rule out is harmless either way —
+        _send_location_checks_ap_ids dedupes against self.locations_checked
+        (see _memory_watcher_loop's docstring for the same "redundant
+        confirmation is harmless" reasoning applied to the save-file path).
+        """
+        # ── Dark soul collected-flag array — fully resolved live via direct
+        # byte-array diff, no heap scan needed. See
+        # DARKSOUL_FLAGARRAY_PTR_RVA's comment block above for the
+        # Ghidra-confirmed structure: array index == save_idx directly.
+        darksoul_flags = _read_darksoul_flagarray(pm, base)
+        if darksoul_flags is not None:
+            if self._darksoul_flags_prev is None:
+                # First successful read this session — baseline only, same
+                # reasoning as the pickup log above (souls collected earlier
+                # this game launch, before we connected, shouldn't replay).
+                self._darksoul_flags_prev = darksoul_flags
+            else:
+                prev = self._darksoul_flags_prev
+                if len(darksoul_flags) != len(prev):
+                    # Length changing would be very unexpected (this isn't
+                    # supposed to be level-scoped — see comment above) —
+                    # log it and just rebaseline rather than guessing.
+                    logger.warning(
+                        f"[ShadowMan] Dark soul flag array length changed "
+                        f"({len(prev)} -> {len(darksoul_flags)}) — "
+                        f"resyncing baseline without resolving.")
+                    self._darksoul_flags_prev = darksoul_flags
+                else:
+                    newly_soul_ap_ids: List[int] = []
+                    unresolved_flip = False
+                    for save_idx in range(len(darksoul_flags)):
+                        if darksoul_flags[save_idx] and not prev[save_idx]:
+                            ap_id = self._loc_map.get((level, save_idx))
+                            if ap_id is None:
+                                # Expected for a Dark Soul retyped onto a
+                                # non-soul slot: the flag index is the
+                                # placed object's reward id (the target
+                                # slot's save_idx, often 0), not anything
+                                # resolvable here. The save-file Govi
+                                # position scan USED TO be the fallback
+                                # resolver for these — removed 2026-08-23
+                                # (Jon: it was misfiring, granting free
+                                # checks for unreached locations; see
+                                # _poll_save_folder's comment). There is no
+                                # resolver for this case anymore — this is
+                                # now just a warning, and the case needs a
+                                # manual /siminject or a future fix. The
+                                # _poll_save_folder() nudge below is kept
+                                # (harmless, still re-polls the still-live
+                                # QuestObject path) but no longer resolves
+                                # retyped souls specifically.
+                                unresolved_flip = True
+                                logger.warning(
+                                    f"[ShadowMan] Dark soul flag save_idx="
+                                    f"{save_idx} flipped but no AP location "
+                                    f"found for (level={level!r}, "
+                                    f"save_idx={save_idx}) — this Dark Soul "
+                                    f"was likely retyped onto a non-soul "
+                                    f"slot; no automatic resolver for that "
+                                    f"case exists anymore (see comment "
+                                    f"above).")
+                            else:
+                                _loc_key = self._ap_id_to_loc_key.get(ap_id)
+                                logger.info(
+                                    f"[ShadowMan] Dark soul flag save_idx="
+                                    f"{save_idx} (level={level!r}) resolved "
+                                    f"to ap_id={ap_id} "
+                                    f"({FRIENDLY_NAMES.get(_loc_key, '?')}, "
+                                    f"{_loc_key}).")
+                                newly_soul_ap_ids.append(ap_id)
+                    # Advance the baseline BEFORE awaiting — see docstring's
+                    # concurrency note.
+                    self._darksoul_flags_prev = darksoul_flags
+                    if newly_soul_ap_ids:
+                        logger.info(
+                            f"[ShadowMan] Live dark soul flag check: "
+                            f"ap_ids={newly_soul_ap_ids}.")
+                        await self._send_location_checks_ap_ids(newly_soul_ap_ids)
+                    if unresolved_flip:
+                        # Same idea as the QuestObject transition nudge:
+                        # only helps if the game has already written the
+                        # save, but cuts the wait to the next natural poll
+                        # when it has.
+                        try:
+                            await self._poll_save_folder()
+                        except Exception as exc:
+                            logger.warning(
+                                f"[ShadowMan] Forced save re-poll after "
+                                f"unresolved dark soul flag flip failed: "
+                                f"{exc}")
+
+        # ── Live soul-counter watcher (2026-07-19) ───────────────────────────
+        # SOUL_COUNT_RVA increments on EVERY dark soul collection — including
+        # the ones the flag array above can't even SEE: a soul retyped onto a
+        # non-soul slot carries reward id = the slot's save_idx (usually 0),
+        # and flag[0] only transitions once — every later reward-0 soul
+        # produces no flip at all, so the unresolved-flip nudge above never
+        # fires for them. The counter catches every one. It can't say WHICH
+        # soul (that's why the flag array exists), so this is a nudge, not a
+        # check: it just forces a save re-poll in case that helps the
+        # still-live QuestObject path pick something up. The save-file Govi
+        # position scan that used to resolve retyped souls specifically was
+        # removed 2026-08-23 (misfiring, free checks for unreached
+        # locations — see _poll_save_folder's comment); there is currently
+        # no automatic resolver for a soul retyped onto a non-soul slot.
+        # Received Dark Souls also bump this counter (inject_dark_soul); the
+        # nudge is a harmless near-no-op then (mtime-gated). First read
+        # baselines, same as every other live watcher here.
+        try:
+            soul_count = pm.read_int(base + SOUL_COUNT_RVA)
+        except Exception:
+            soul_count = None
+        if soul_count is not None:
+            prev_soul_count = self._live_soul_count
+            # Advance BEFORE awaiting — see docstring's concurrency note.
+            self._live_soul_count = soul_count
+            if prev_soul_count is not None and soul_count > prev_soul_count:
+                logger.info(
+                    f"[ShadowMan] Live soul counter: {prev_soul_count} -> "
+                    f"{soul_count} — nudging save re-poll.")
+                try:
+                    await self._poll_save_folder()
+                except Exception as exc:
+                    logger.warning(
+                        f"[ShadowMan] Forced save re-poll after soul "
+                        f"counter increment failed: {exc}")
+
+    async def _fast_watcher_loop(self) -> None:
+        """
+        Dedicated fast poll for the handful of live signals cheap enough to
+        check every FAST_POLL_INTERVAL instead of waiting for the normal
+        once-a-second sweep. Runs alongside _memory_watcher_loop, not
+        instead of it — that loop still does everything else (govi
+        save-state, gad/poigne resync, secret poller forensics, etc.) at
+        the normal POLL_INTERVAL cadence; there's no urgency for any of
+        that.
+
+        Originally pickup-counter-only (2026-08-03, Jon: "for AP items
+        that are close to level transitions, we can lose detecting an AP
+        pickup if we switch levels before a poll... can we still have the
+        pickup counter incrementing trigger an instant poll check").
+        Extended 2026-08-23 (Jon: "the counters go up right away on
+        getting [a dark soul] so figured we could have the AP location
+        sweep check at the same time") to also cover the dark soul flag
+        array + live soul counter, and again the same day (Jon: "i think
+        the light soul needs that instant poll check too") to cover
+        CF_GOT_LIGHTSOUL — all three are direct fixed-size memory reads
+        (no heap scan, no file I/O; read_named_flag is two plain reads,
+        no code injection — see its own docstring), so checking them at
+        this cadence instead of POLL_INTERVAL's 1.0s costs nothing extra
+        per tick. _poll_live_light_soul in particular is a near-total
+        no-op once resolved (self._light_soul_ap_id is None or
+        self._light_soul_resolved short-circuits before any read), so it
+        stays cheap even polled this often for the entire rest of a
+        session after the one real check.
+
+        Each tick does one shared cheap read (current level) plus these
+        signals' own cheap reads, and calls the exact same
+        _process_pickup_log / _process_darksoul_watch / _poll_live_light_soul
+        methods used by the main sweep — see those methods' docstrings for
+        why level must be read fresh at detection time rather than reused
+        from the main loop's own (potentially stale-by-now) snapshot, and
+        for why calling them from two loops concurrently is safe with no
+        lock (_poll_live_light_soul needs no such argument -- it's
+        idempotent past the first True read via _light_soul_resolved,
+        same one-shot latch either loop can set).
         """
         while not self.exit_event.is_set():
             try:
@@ -6099,9 +6412,11 @@ class ShadowManContext(SuperContext):
                     live_level = _read_current_level_live(pm, base)
                     level = live_level or self.current_level
                     await self._process_pickup_log(pm, base, level)
+                    await self._process_darksoul_watch(pm, base, level)
+                    await self._poll_live_light_soul(pm, base)
             except Exception as exc:
-                logger.warning(f"[ShadowMan] Fast pickup watcher error: {exc}")
-            await asyncio.sleep(FAST_PICKUP_POLL_INTERVAL)
+                logger.warning(f"[ShadowMan] Fast watcher error: {exc}")
+            await asyncio.sleep(FAST_POLL_INTERVAL)
 
     async def _memory_watcher_loop(self) -> None:
         """
@@ -6388,115 +6703,21 @@ class ShadowManContext(SuperContext):
         # Extracted into _process_pickup_log() (2026-08-03, Jon: "for AP
         # items close to level transitions, we can lose detecting a pickup
         # if we switch levels before a poll") -- also called from
-        # _fast_pickup_watcher_loop, a separate, much shorter-interval loop
-        # that ONLY checks this one counter, so a pickup right next to a
-        # door gets resolved (using the level read at that same instant,
-        # not whichever level this once-a-second sweep happens to catch)
-        # long before a level transition can race ahead of it. See that
-        # method's docstring for the full reasoning and the concurrency
-        # argument for why calling this from two loops is safe.
+        # _fast_watcher_loop, a separate, much shorter-interval loop, so a
+        # pickup right next to a door gets resolved (using the level read
+        # at that same instant, not whichever level this once-a-second
+        # sweep happens to catch) long before a level transition can race
+        # ahead of it. See that method's docstring for the full reasoning
+        # and the concurrency argument for why calling this from two loops
+        # is safe.
         await self._process_pickup_log(pm, base, level)
 
-        # ── Dark soul collected-flag array — fully resolved live via direct
-        # byte-array diff, no heap scan needed. See
-        # DARKSOUL_FLAGARRAY_PTR_RVA's comment block above for the
-        # Ghidra-confirmed structure: array index == save_idx directly.
-        darksoul_flags = _read_darksoul_flagarray(pm, base)
-        if darksoul_flags is not None:
-            if self._darksoul_flags_prev is None:
-                # First successful read this session — baseline only, same
-                # reasoning as the pickup log above (souls collected earlier
-                # this game launch, before we connected, shouldn't replay).
-                self._darksoul_flags_prev = darksoul_flags
-            else:
-                prev = self._darksoul_flags_prev
-                if len(darksoul_flags) != len(prev):
-                    # Length changing would be very unexpected (this isn't
-                    # supposed to be level-scoped — see comment above) —
-                    # log it and just rebaseline rather than guessing.
-                    logger.warning(
-                        f"[ShadowMan] Dark soul flag array length changed "
-                        f"({len(prev)} -> {len(darksoul_flags)}) — "
-                        f"resyncing baseline without resolving.")
-                else:
-                    newly_soul_ap_ids: List[int] = []
-                    unresolved_flip = False
-                    for save_idx in range(len(darksoul_flags)):
-                        if darksoul_flags[save_idx] and not prev[save_idx]:
-                            ap_id = self._loc_map.get((level, save_idx))
-                            if ap_id is None:
-                                # Expected for a Dark Soul retyped onto a
-                                # non-soul slot: the flag index is the
-                                # placed object's reward id (the target
-                                # slot's save_idx, often 0), not anything
-                                # resolvable here. The save-file Govi
-                                # position scan is the authoritative path
-                                # for those — nudge it below.
-                                unresolved_flip = True
-                                logger.warning(
-                                    f"[ShadowMan] Dark soul flag save_idx="
-                                    f"{save_idx} flipped but no AP location "
-                                    f"found for (level={level!r}, "
-                                    f"save_idx={save_idx}) — deferring to "
-                                    f"the save-file Govi position scan.")
-                            else:
-                                _loc_key = self._ap_id_to_loc_key.get(ap_id)
-                                logger.info(
-                                    f"[ShadowMan] Dark soul flag save_idx="
-                                    f"{save_idx} (level={level!r}) resolved "
-                                    f"to ap_id={ap_id} "
-                                    f"({FRIENDLY_NAMES.get(_loc_key, '?')}, "
-                                    f"{_loc_key}).")
-                                newly_soul_ap_ids.append(ap_id)
-                    if newly_soul_ap_ids:
-                        logger.info(
-                            f"[ShadowMan] Live dark soul flag check: "
-                            f"ap_ids={newly_soul_ap_ids}.")
-                        await self._send_location_checks_ap_ids(newly_soul_ap_ids)
-                    if unresolved_flip:
-                        # Same idea as the QuestObject transition nudge:
-                        # only helps if the game has already written the
-                        # save, but cuts the wait to the next natural poll
-                        # when it has.
-                        try:
-                            await self._poll_save_folder()
-                        except Exception as exc:
-                            logger.warning(
-                                f"[ShadowMan] Forced save re-poll after "
-                                f"unresolved dark soul flag flip failed: "
-                                f"{exc}")
-                self._darksoul_flags_prev = darksoul_flags
-
-        # ── Live soul-counter watcher (2026-07-19) ───────────────────────────
-        # SOUL_COUNT_RVA increments on EVERY dark soul collection — including
-        # the ones the flag array above can't even SEE: a soul retyped onto a
-        # non-soul slot carries reward id = the slot's save_idx (usually 0),
-        # and flag[0] only transitions once — every later reward-0 soul
-        # produces no flip at all, so the unresolved-flip nudge above never
-        # fires for them. The counter catches every one. It can't say WHICH
-        # soul (that's why the flag array exists), so this is a nudge, not a
-        # check: the save-file Govi position scan in _poll_save_folder is
-        # the authoritative resolver for retyped souls. Received Dark Souls
-        # also bump this counter (inject_dark_soul); the nudge is a harmless
-        # near-no-op then (mtime-gated). First read baselines, same as every
-        # other live watcher here.
-        try:
-            soul_count = pm.read_int(base + SOUL_COUNT_RVA)
-        except Exception:
-            soul_count = None
-        if soul_count is not None:
-            prev_soul_count = self._live_soul_count
-            self._live_soul_count = soul_count
-            if prev_soul_count is not None and soul_count > prev_soul_count:
-                logger.info(
-                    f"[ShadowMan] Live soul counter: {prev_soul_count} -> "
-                    f"{soul_count} — nudging save re-poll.")
-                try:
-                    await self._poll_save_folder()
-                except Exception as exc:
-                    logger.warning(
-                        f"[ShadowMan] Forced save re-poll after soul "
-                        f"counter increment failed: {exc}")
+        # ── Dark soul collected-flag array + live soul counter — fully
+        # resolved live, no heap scan needed. See _process_darksoul_watch's
+        # own docstring: factored out (2026-08-23) so it can also be driven
+        # by _fast_watcher_loop at FAST_POLL_INTERVAL, same idea as
+        # _process_pickup_log above.
+        await self._process_darksoul_watch(pm, base, level)
 
         # Heap walk for QuestObject only now — Govi/AIGovi signatures were
         # removed 2026-07-19 (see DARKSOUL_FLAGARRAY_PTR_RVA above; the
@@ -6576,7 +6797,10 @@ class ShadowManContext(SuperContext):
         await self._poll_live_inventory(pm, base)
 
         # ── Light Soul possession flag — fully resolved live, no save file
-        # or heap-scan needed. See LIGHT_SOUL_FLAG_RVA.
+        # or heap-scan needed. See LIGHT_SOUL_FLAG_RVA. Also driven by
+        # _fast_watcher_loop at FAST_POLL_INTERVAL (2026-08-23, Jon: "i
+        # think the light soul needs that instant poll check too") — safe
+        # to call from both loops, see _fast_watcher_loop's docstring.
         await self._poll_live_light_soul(pm, base)
 
     async def _poll_live_inventory(self, pm, base: int) -> None:
@@ -7112,6 +7336,58 @@ class ShadowManContext(SuperContext):
         # AP-only synthetic effect with no vanilla pickup path of its own
         # (see items.py's Trap/Bonus comment) — a self-found copy still
         # needs the actual trap/bonus effect triggered, nothing native does it.
+        # Unique Retractor Keys (2026-08-19, Jon's report: physically
+        # picking up "Retractor - Prison" in-game left ALL FIVE
+        # CF_CUSTOM00-04 flags at 0) — a self-found retractor key used to
+        # fall straight into the blanket self-found skip just below and
+        # return before EVER reaching the CF_CUSTOM flag logic in the
+        # "give_item" branch further down. That meant the only thing that
+        # could ever set the flag for a self-found key was Hook B
+        # (unique_retractor_keys_patch.py's native pickup-side splice,
+        # separate repo) — if Hook B doesn't fire for any reason (Jon's own
+        # suspicion: something about the pickup animation/dispatch path it
+        # splices into; possibly instant_pickup_patch-adjacent, not fully
+        # root-caused), the schism stayed permanently locked with nothing
+        # to ever catch it, since a self-found item's own ReceivedItems
+        # echo — the only other event that revisits this location — was
+        # unconditionally short-circuited before reaching the flag check,
+        # and /catchup's replay path had the identical shortcut (see
+        # its own matching fix). Give the native GiveItem() call itself the
+        # same self-found skip as before (still correct — vanilla's own
+        # pickup already ran it; re-injecting would double-count the
+        # stackable retractor total, see the comment block above), but
+        # ALWAYS run the same flag check the remote-grant path uses
+        # (write_named_flag()'s own docstring), backstopping if it's not
+        # already set — this is the client-side self-injection Jon asked
+        # for specifically for the save flag, not the item count,
+        # independent of whatever Hook B did or didn't do.
+        if source_player == self.slot and item_name in RETRACTOR_KEY_ITEM_TO_CF_INDEX:
+            cf_index = RETRACTOR_KEY_ITEM_TO_CF_INDEX[item_name]
+            pm, base = _get_process()
+            if pm is not None and base is not None:
+                if read_named_flag(pm, base, cf_index):
+                    logger.info(
+                        f"[ShadowMan] {item_name} was self-found — CF_CUSTOM "
+                        f"flag already set (Hook B fired normally).")
+                elif write_named_flag(pm, base, cf_index):
+                    logger.info(
+                        f"[ShadowMan] {item_name} was self-found but its "
+                        f"CF_CUSTOM flag wasn't set natively (Hook B "
+                        f"apparently didn't fire) — set it directly instead; "
+                        f"schism now unlockable.")
+                else:
+                    logger.warning(
+                        f"[ShadowMan] {item_name} self-found but its "
+                        f"CF_CUSTOM flag could not be confirmed or repaired "
+                        f"— its schism may stay locked until a future "
+                        f"reconnect/backlog replay retries this.")
+            else:
+                logger.info(
+                    f"[ShadowMan] {item_name} self-found but game not "
+                    f"running — flag check deferred to a future "
+                    f"reconnect/backlog replay (/catchup).")
+            return
+
         if source_player == self.slot and method not in ("gad", "poigne_ability", "light_soul", "cadeaux", "trap_bonus"):
             logger.info(
                 f"[ShadowMan] {item_name} was self-found (already applied "
@@ -7215,7 +7491,22 @@ class ShadowManContext(SuperContext):
             # inject anyway") for them — the exact gap that let a foreign
             # Retractor/Accumulator get re-granted on a reconnect/replay.
             # Use the running-total counter check instead for these two.
-            if item_name in STACKABLE_GIVEITEM_COUNT_RVAS:
+            #
+            # Unique Retractor Keys (2026-08-18): the 5 named
+            # "Retractor - <region>" items have neither a possession flag
+            # (ITEM_FLAG_RVAS) nor a per-item counter — checked first, ahead
+            # of STACKABLE_GIVEITEM_COUNT_RVAS, via the save-backed
+            # CF_CUSTOM00-04 flag. That flag gets set from TWO different
+            # places depending on how this player received the item: the
+            # exe patch's own Hook B when it's a real native pickup in this
+            # player's world, or write_named_flag() just below when it's a
+            # remote grant delivered over the network (see that function's
+            # own docstring for why both paths are needed — RETRACTOR_KEY_
+            # ITEM_TO_CF_INDEX's comment covers the index derivation).
+            if item_name in RETRACTOR_KEY_ITEM_TO_CF_INDEX:
+                already_sufficient = read_named_flag(
+                    pm, base, RETRACTOR_KEY_ITEM_TO_CF_INDEX[item_name])
+            elif item_name in STACKABLE_GIVEITEM_COUNT_RVAS:
                 already_sufficient = _stackable_giveitem_already_sufficient(
                     pm, base, item_name, self._received_count(item_name))
             else:
@@ -7230,6 +7521,24 @@ class ShadowManContext(SuperContext):
                 ok = inject_give_item(pm, base, arg)
                 if ok:
                     logger.info(f"[ShadowMan] GiveItem({arg:#x}) injected.")
+                    # Remote-grant flag set (2026-08-18) — see
+                    # write_named_flag()'s own docstring. Hook B (native
+                    # pickup) never runs for a give_item-injected grant, so
+                    # without this the schism's exe-side gate would stay
+                    # permanently locked for a remotely-received key even
+                    # though AP correctly considers this player to have it.
+                    if item_name in RETRACTOR_KEY_ITEM_TO_CF_INDEX:
+                        if write_named_flag(
+                                pm, base, RETRACTOR_KEY_ITEM_TO_CF_INDEX[item_name]):
+                            logger.info(
+                                f"[ShadowMan] {item_name} CF_CUSTOM flag set "
+                                f"(remote grant — schism now unlockable).")
+                        else:
+                            logger.warning(
+                                f"[ShadowMan] {item_name} granted but its "
+                                f"CF_CUSTOM flag could not be confirmed set — "
+                                f"its schism may stay locked until a future "
+                                f"reconnect/backlog replay retries this.")
 
         elif method == "gad":
             # Cumulative count of real Gad Temple items ONLY — Poigne no
@@ -7341,9 +7650,14 @@ class ShadowManContext(SuperContext):
             # ability, the same flag _poll_live_light_soul watches to
             # detect a genuine physical Fogometers visit. Setting this
             # BEFORE the call (not after) closes a narrow but real race:
-            # _poll_live_light_soul runs on a separate ~1s poll loop and
-            # could otherwise observe the flag flip between this call
-            # returning and the next line running.
+            # _poll_live_light_soul runs on both _memory_watcher_loop (~1s)
+            # and, since 2026-08-23, _fast_watcher_loop (FAST_POLL_INTERVAL,
+            # ~0.15s -- see that loop's docstring) and could otherwise
+            # observe the flag flip between this call returning and the
+            # next line running. The tighter fast-loop cadence makes that
+            # window MORE likely to actually get hit if this were ordered
+            # the other way, not less -- pre-setting the flag first is what
+            # makes the ordering safe at any poll cadence.
             self._light_soul_injected_this_session = True
             ok = inject_light_soul(pm, base)
             if ok:
@@ -8315,20 +8629,23 @@ class ShadowManContext(SuperContext):
                     logger.info("[ShadowMan] Voodoo Max Hold: game not running, stopping.")
                     return
                 if _read_is_at_title_screen(pm, base) is not False:
-                    logger.info(f"[ShadowMan] Voodoo Max Hold: not confirmed in-game, "
-                                f"tick {i + 1} skipped.")
+                    if self.debug_hold_logging:
+                        logger.info(f"[ShadowMan] Voodoo Max Hold: not confirmed in-game, "
+                                    f"tick {i + 1} skipped.")
                     i += 1
                     continue
                 cap = read_voodoo_power_cap(pm, base)
                 if cap is None:
-                    logger.info(f"[ShadowMan] Voodoo Max Hold: cap read failed, "
-                                f"tick {i + 1} skipped.")
+                    if self.debug_hold_logging:
+                        logger.info(f"[ShadowMan] Voodoo Max Hold: cap read failed, "
+                                    f"tick {i + 1} skipped.")
                     i += 1
                     continue
                 ok = set_voodoo_power(pm, base, cap)
-                logger.info(f"[ShadowMan] Voodoo Max Hold tick {i + 1}"
-                            f"{'' if permanent else f'/{ticks}'}: "
-                            f"{'ok' if ok else 'FAILED'} — cap={cap}")
+                if self.debug_hold_logging:
+                    logger.info(f"[ShadowMan] Voodoo Max Hold tick {i + 1}"
+                                f"{'' if permanent else f'/{ticks}'}: "
+                                f"{'ok' if ok else 'FAILED'} — cap={cap}")
                 i += 1
         finally:
             if self._active_voodoo_hold_task is asyncio.current_task():
@@ -8406,14 +8723,16 @@ class ShadowManContext(SuperContext):
                     logger.info("[ShadowMan] Ammo Max Hold: game not running, stopping.")
                     return
                 if _read_is_at_title_screen(pm, base) is not False:
-                    logger.info(f"[ShadowMan] Ammo Max Hold: not confirmed in-game, "
-                                f"tick {i + 1} skipped.")
+                    if self.debug_hold_logging:
+                        logger.info(f"[ShadowMan] Ammo Max Hold: not confirmed in-game, "
+                                    f"tick {i + 1} skipped.")
                     i += 1
                     continue
-                ok = apply_ammo_fill(pm, base)
-                logger.info(f"[ShadowMan] Ammo Max Hold tick {i + 1}"
-                            f"{'' if permanent else f'/{ticks}'}: "
-                            f"{'ok' if ok else 'FAILED'}")
+                ok = apply_ammo_fill(pm, base, log=self.debug_hold_logging)
+                if self.debug_hold_logging:
+                    logger.info(f"[ShadowMan] Ammo Max Hold tick {i + 1}"
+                                f"{'' if permanent else f'/{ticks}'}: "
+                                f"{'ok' if ok else 'FAILED'}")
                 i += 1
         finally:
             if self._active_ammo_hold_task is asyncio.current_task():
@@ -8505,7 +8824,39 @@ class ShadowManContext(SuperContext):
             # tuple purely so the two code paths stay consistent with each
             # other, not because replay still needs to do anything special
             # for it.
-            if source_player == self.slot and method not in ("gad", "poigne_ability", "light_soul", "cadeaux", "trap_bonus"):
+            # Unique Retractor Keys (2026-08-19) — same gap as _inject_item's
+            # identical fix above: a self-found retractor key used to take
+            # the plain "ok = True" shortcut just below without ever
+            # touching the CF_CUSTOM flag, which meant /catchup replaying a
+            # self-found key whose Hook B never fired (see _inject_item's
+            # comment for the fuller story) could NEVER repair it — the one
+            # path write_named_flag()'s own docstring calls out as the
+            # retry mechanism was itself skipped for exactly the case that
+            # needs retrying. Still skip the native GiveItem() re-injection
+            # (vanilla already ran it; re-injecting double-counts the
+            # stackable total), but always check/backstop the flag first.
+            if source_player == self.slot and item_name in RETRACTOR_KEY_ITEM_TO_CF_INDEX:
+                cf_index = RETRACTOR_KEY_ITEM_TO_CF_INDEX[item_name]
+                pm, base = _get_process()
+                if pm is None:
+                    logger.warning("[ShadowMan] Game closed during replay — stopping.")
+                    self.gad_powers_received = saved_gad
+                    return
+                if read_named_flag(pm, base, cf_index):
+                    ok = True
+                else:
+                    ok = write_named_flag(pm, base, cf_index)
+                    if ok:
+                        logger.info(
+                            f"[ShadowMan] [replay] {item_name} self-found but "
+                            f"its CF_CUSTOM flag wasn't set natively — "
+                            f"repaired via write_named_flag().")
+                    else:
+                        logger.warning(
+                            f"[ShadowMan] [replay] {item_name} self-found but "
+                            f"its CF_CUSTOM flag could not be confirmed or "
+                            f"repaired.")
+            elif source_player == self.slot and method not in ("gad", "poigne_ability", "light_soul", "cadeaux", "trap_bonus"):
                 ok = True
             else:
                 # Re-obtain process handle each item so a crash mid-replay is caught
@@ -8550,8 +8901,14 @@ class ShadowManContext(SuperContext):
                     # _item_already_owned_live's docstring. Retractor/
                     # Accumulator use the running-total counter check
                     # instead (2026-08-10) — see
-                    # STACKABLE_GIVEITEM_COUNT_RVAS's comment.
-                    if item_name in STACKABLE_GIVEITEM_COUNT_RVAS:
+                    # STACKABLE_GIVEITEM_COUNT_RVAS's comment. The 5 named
+                    # Unique Retractor Keys items (2026-08-18) use the
+                    # CF_CUSTOM00-04 flag check instead — see
+                    # RETRACTOR_KEY_ITEM_TO_CF_INDEX's comment.
+                    if item_name in RETRACTOR_KEY_ITEM_TO_CF_INDEX:
+                        already_sufficient = read_named_flag(
+                            pm, base, RETRACTOR_KEY_ITEM_TO_CF_INDEX[item_name])
+                    elif item_name in STACKABLE_GIVEITEM_COUNT_RVAS:
                         already_sufficient = _stackable_giveitem_already_sufficient(
                             pm, base, item_name, self._received_count(item_name))
                     else:
@@ -8560,6 +8917,16 @@ class ShadowManContext(SuperContext):
                         ok = True
                     else:
                         ok = inject_give_item(pm, base, arg)
+                        # Remote-grant flag set (2026-08-18) — same
+                        # reasoning as _inject_item's identical block above;
+                        # this replay path is exactly the kind of "future
+                        # reconnect/backlog replay" a failed write here
+                        # would be retried by, so keep both call sites
+                        # consistent rather than relying solely on the
+                        # other one.
+                        if ok and item_name in RETRACTOR_KEY_ITEM_TO_CF_INDEX:
+                            write_named_flag(
+                                pm, base, RETRACTOR_KEY_ITEM_TO_CF_INDEX[item_name])
                 elif method == "gad":
                     # apply_now=False (2026-08-01, Jon's call pending a
                     # Ghidra look at FUN_140459d50) — this whole method is
@@ -8770,7 +9137,20 @@ class ShadowManContext(SuperContext):
         prereqs = [
             ("Engineers Key",        _has("Engineers Key"), "held" if _has("Engineers Key") else "not held"),
             ("Soul Level 2",         sl_ok,                  f"SL {sl if sl is not None else '—'}"),
-            ("Retractors",           retractor_n >= 5,       f"{retractor_n}/5"),
+        ]
+        # Unique Retractor Keys (2026-08-18): named-key mode has no fungible
+        # "Retractor" item at all (items.py's create_items() branch), so
+        # retractor_n (a count of literal "Retractor") would always read 0/5
+        # here and misreport "not held" even with all 5 named keys in hand.
+        # Show each region's own key instead — mirrors how Prison Key Card/
+        # Poigne/Gad Power are already shown individually below.
+        if self.unique_retractor_keys_on:
+            for _item_name in RETRACTOR_KEY_ITEM_NAMES.values():
+                _held = _has(_item_name)
+                prereqs.append((_item_name, _held, "held" if _held else "not held"))
+        else:
+            prereqs.append(("Retractors", retractor_n >= 5, f"{retractor_n}/5"))
+        prereqs += [
             ("Eclipser (Night)",     len(eclipser_have) == 3, eclipser_detail),
             ("Prison Key Card (Prison)", _has("Prison Key Card"), "held" if _has("Prison Key Card") else "not held"),
             ("Poigne (Queens)",      _has("Poigne"),         "held" if _has("Poigne") else "not held"),
@@ -9214,11 +9594,43 @@ class ShadowManContext(SuperContext):
                     size_hint_y=None, height="22dp", halign="left", valign="middle",
                 ))
                 self.children[0].bind(size=lambda l, s: setattr(l, "text_size", s))
+
+                # BUG FIX (2026-08-19, Jon: "why does it seem like gad level
+                # 3 and poigne dropped off go-mode requirements on ap_gui
+                # tracker?" / "and prison key card") — self.prereq_lbls used
+                # to be a plain list of Labels add_widget()'d straight into
+                # this layout, permanently sized right here from whatever
+                # ctx._go_mode_prerequisites() returned at __init__ time.
+                # But slot_data hasn't necessarily arrived yet when __init__
+                # runs, so unique_retractor_keys_on is still its default
+                # (False) and _go_mode_prerequisites() returns the flat
+                # single "Retractors" row rather than the 5 named per-region
+                # rows — self.prereq_lbls got permanently sized for the FLAT
+                # case (7 rows: Engineers Key, Soul Level 2, Retractors,
+                # Eclipser (Night), Prison Key Card, Poigne, Gad Power x3).
+                # update() below re-fetches prereqs fresh every 0.5s
+                # (correctly reflecting unique_retractor_keys_on once
+                # slot_data resolves — 11 rows once the flat Retractors row
+                # becomes 5 named ones), but was zip()ing that longer fresh
+                # list against this stale fixed-size widget list — zip()
+                # silently truncates to the shorter side, so everything past
+                # the original 7 (Eclipser (Night), Prison Key Card, Poigne,
+                # Gad Power x3) never got a widget and simply stopped
+                # rendering the moment unique_retractor_keys_on flipped true.
+                # Fix: give prereq rows their own dedicated sub-layout
+                # (prereq_box) so they can be rebuilt on a count change
+                # without disturbing this layout's other widgets' positions
+                # (jacks_lbl / engine_header_lbl / region_lbls all come after
+                # them and must stay put) — same "rebuild rows only when the
+                # count changes" pattern ShadowManLocationsLayout.update()
+                # below already uses for per-location rows.
+                self.prereq_box = BoxLayout(orientation="vertical", size_hint_y=None, spacing="2dp")
+                self.prereq_box.bind(minimum_height=self.prereq_box.setter("height"))
+                self.add_widget(self.prereq_box)
                 self.prereq_lbls: List["Label"] = []
-                for label, _ok, _detail in ctx._go_mode_prerequisites():
-                    lbl = _stat_label(f"  {label}: —")
-                    self.prereq_lbls.append(lbl)
-                    self.add_widget(lbl)
+                _init_prereqs = [p for p in ctx._go_mode_prerequisites()
+                                  if p[0] != "Jacks Schematic (Piston Combos)"]
+                self._rebuild_prereq_rows(_init_prereqs)
 
                 # Jacks Schematic (2026-07-28, Jon: "please also move jacks
                 # schematics with the prerequisites") — a dedicated,
@@ -9262,16 +9674,42 @@ class ShadowManContext(SuperContext):
                 # per-region list, which was pure duplication once that
                 # Prerequisites row existed.
 
+            def _rebuild_prereq_rows(self, base_prereqs) -> None:
+                """(Re)builds self.prereq_lbls, inside self.prereq_box, to
+                match len(base_prereqs). Called once from __init__ and again
+                from update() whenever the prereq count changes — in
+                practice, once slot_data resolves unique_retractor_keys_on
+                sometime after __init__ already ran with the default-False
+                (flat "Retractors" row) shape. See the BUG FIX comment above
+                self.prereq_box's construction for the full story."""
+                for lbl in self.prereq_lbls:
+                    self.prereq_box.remove_widget(lbl)
+                self.prereq_lbls = []
+                for label, _ok, _detail in base_prereqs:
+                    lbl = _stat_label(f"  {label}: —")
+                    self.prereq_lbls.append(lbl)
+                    self.prereq_box.add_widget(lbl)
+
             def update(self) -> None:
                 prereqs = ctx._go_mode_prerequisites()
-                # Jacks Schematic (2026-07-28) is the only prereq whose
-                # presence varies (appended by _go_mode_prerequisites()
-                # only once piston_combos_on is known true) — split it off
-                # by name rather than relying on list length/position, so
-                # the base 7 rows always zip onto their fixed self.prereq_lbls
-                # slots regardless of whether the 8th is present yet.
+                # Jacks Schematic (2026-07-28) is the one prereq that has
+                # its own dedicated always-present widget slot (jacks_lbl,
+                # collapsed to height=0 when absent) rather than living in
+                # prereq_box/prereq_lbls — split it off by name rather than
+                # relying on list length/position, since piston_combos_on
+                # (and therefore whether it's present at all) only becomes
+                # known once slot_data arrives, same as unique_retractor_keys_on
+                # below.
                 base_prereqs = [p for p in prereqs if p[0] != "Jacks Schematic (Piston Combos)"]
                 jacks_entry  = next((p for p in prereqs if p[0] == "Jacks Schematic (Piston Combos)"), None)
+
+                # Rebuild rows only when the count changes (mirrors
+                # ShadowManLocationsLayout.update() below) — this is what
+                # picks up the flat-Retractors-row (1) → 5-named-rows jump
+                # once unique_retractor_keys_on resolves true after
+                # __init__ already built prereq_lbls for the flat case.
+                if len(self.prereq_lbls) != len(base_prereqs):
+                    self._rebuild_prereq_rows(base_prereqs)
 
                 for lbl, (label, ok, detail) in zip(self.prereq_lbls, base_prereqs):
                     color = "00FA9A" if ok else "FFA500"
@@ -9410,7 +9848,7 @@ async def main(args) -> None:
     ctx.server_task = asyncio.create_task(server_loop(ctx), name="server loop")
     asyncio.create_task(ctx._save_watcher_loop(),   name="save watcher")
     asyncio.create_task(ctx._memory_watcher_loop(), name="memory watcher")
-    asyncio.create_task(ctx._fast_pickup_watcher_loop(), name="fast pickup watcher")
+    asyncio.create_task(ctx._fast_watcher_loop(), name="fast watcher")
     asyncio.create_task(ctx._item_inject_loop(),  name="item injector")
     asyncio.create_task(ctx._goal_watcher_loop(), name="goal watcher")
     asyncio.create_task(ctx._health_watcher_loop(), name="health watcher")
