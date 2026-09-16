@@ -7,6 +7,7 @@ Shadow Man Remastered Archipelago World.
 from __future__ import annotations
 
 import json
+import zipfile
 from pathlib import Path
 from typing import Dict, Any
 from BaseClasses import ItemClassification, Tutorial
@@ -15,13 +16,15 @@ from worlds.LauncherComponents import components, Component, launch_subprocess, 
 
 from .access_rules import R, make_location_rule, make_entrance_rule
 from .constants import GATE_VANILLA_SL, GATE_PRESETS, COFFIN_GATE_ORDER
-from .fill import _shuffle_gates, FIXED_SOUL_LOCS, CHECKABLE_LOCS, LIVESIDE_REGIONS, CADEAUX_666_LOCS
+from .fill import _shuffle_gates, FIXED_SOUL_LOCS, CHECKABLE_LOCS, LIVESIDE_REGIONS, CADEAUX_666_LOCS, \
+    DEPTH_BUCKETS
 from .regions import create_regions, DEADSIDE_PORTAL_FILES, ASYLUM_ENGINE_BLOCK, \
     ASYLUM_ENGINE_BLOCK_LONDON, ASYLUM_ENGINE_BLOCK_PRISON, ASYLUM_ENGINE_BLOCK_FLORIDA, \
     ASYLUM_ENGINE_BLOCK_SALVAGE, ASYLUM_ENGINE_BLOCK_QUEENS, \
-    compute_cadeaux_bundle_representatives, round_robin_by_group
+    compute_cadeaux_bundle_representatives, nested_round_robin_by_group
 from .items import ShadowManItem, item_table, STACKABLE_COUNTS, AP_ITEM_TO_RSC, _UNIQUE_ITEM_RSC_NAMES, \
-    is_cadeaux_item, cadeaux_bundle_item_name, CADEAUX_ITEM_NAMES, is_trap_bonus_item
+    is_cadeaux_item, cadeaux_bundle_item_name, CADEAUX_ITEM_NAMES, is_trap_bonus_item, \
+    RETRACTOR_KEY_ITEM_NAMES
 from .locations import ShadowManLocation, location_table
 from .options import ShadowManOptions
 
@@ -395,7 +398,7 @@ class ShadowManWorld(World):
         # options.py/regions.py), and only when it's ON do we bother
         # precollecting the shortfall as starting Cadeaux -- same idea as a
         # real player already having picked up the un-randomized/unplaceable
-        # cadeaux automatically. Also requires Insanity (Cadeaux is only an
+        # cadeaux automatically. Also requires Cadeauxsanity (Cadeaux is only an
         # AP-tracked item then -- see cadeaux_666()'s docstring in
         # access_rules.py); zero deficit is a no-op either way.
         #
@@ -403,7 +406,7 @@ class ShadowManWorld(World):
         # precollected AND collect_item()'s Cadeaux-counting fix (see
         # create_item() below), a live repro topped out at 665/666 in one
         # seed -- Cadeaux items can land in the OTHER player's world (they're
-        # ordinary filler, free to go anywhere once Insanity is on), and one
+        # ordinary filler, free to go anywhere once Cadeauxsanity is on), and one
         # apparently landed somewhere with its own reachability snag on that
         # side. Rather than chase down which specific cross-world placement
         # stalls in any given seed (varies seed to seed), add a flat safety
@@ -486,6 +489,34 @@ class ShadowManWorld(World):
         # instead guarantees near-even representation across whatever
         # subregion/gate groups quest.rsc barrels actually exist in,
         # regardless of each group's raw size.
+        # Depth-bucket dimension (2026-08-18, Jon's idea): (level_region,
+        # gate_raw) alone leaves liveside interiors nearly undiversified —
+        # gate_raw is None for almost everything inside a liveside level (the
+        # region's own entrance rule lives on the region CONNECTION, not on
+        # individual locations), so most liveside barrel candidates collapsed
+        # into one (region, None) group regardless of how far into the level
+        # they physically sit. fill.py's DEPTH_BUCKETS adds a third grouping
+        # dimension — early/mid/late thirds of that region's own zone range,
+        # via the RSC record's own sector tag — so that flat group now splits
+        # by physical progression too. See DEPTH_BUCKETS's own docstring in
+        # fill.py for the full derivation and real-data verification.
+        # Level-spread fix (2026-08-18, Jon's follow-up: "otherwise the
+        # levels with the most checks are gonna have all the location checks
+        # in them most likely, like the temple levels and certain asylum
+        # levels"). A FLAT (level_region, gate_raw, depth_bucket) key still
+        # let a level that fans out into more sub-groups (more gates, or a
+        # region split like Engine Block's 6-way schism division) dominate
+        # purely from having more competing groups at round_robin_by_group's
+        # one flat tier — confirmed empirically (n=200, same seed):
+        # as4dkeng got 23 picks, Underground/Cageways/Cathedral of Pain got
+        # as few as 6, a ~4x disparity, exactly matching Jon's prediction.
+        # Switched to nested_round_robin_by_group() with level_id as the
+        # OUTERMOST tier — every physical level now gets one turn per round
+        # regardless of how many gate/depth sub-groups it fans out into
+        # beneath that. Same seed, same scenario: 12-13 picks across all 16
+        # levels, within one pick of a perfectly even 200/16 = 12.5 share.
+        # See nested_round_robin_by_group()'s own docstring in regions.py
+        # for the full mechanism and verification.
         if self._ut_passthrough is not None:
             self.barrel_promoted_locs = frozenset(self._ut_passthrough["barrel_promoted_locs"])
         else:
@@ -502,9 +533,15 @@ class ShadowManWorld(World):
                  and not l.can_softlock),
                 key=lambda l: l.loc_key)
             _barrel_n = min(int(self.options.trap_bonus_count), len(_barrel_raw_candidates))
-            _barrel_picked = round_robin_by_group(
+            _barrel_picked = nested_round_robin_by_group(
                 self.random, _barrel_raw_candidates,
-                key_fn=lambda l: (l.level_region, l.gate_raw), n=_barrel_n)
+                key_fns=[
+                    lambda l: l.level_id,
+                    lambda l: l.level_region,
+                    lambda l: l.gate_raw,
+                    lambda l: DEPTH_BUCKETS.get(l.loc_key, 1),
+                ],
+                n=_barrel_n)
             self.barrel_promoted_locs = frozenset(l.loc_key for l in _barrel_picked)
 
         # Cadeaux Bundle Size x Fogometers Cadeaux Required (2026-07-27,
@@ -560,7 +597,7 @@ class ShadowManWorld(World):
             len(self.cadeaux_bundle_representatives))
 
         _CADEAUX_SLACK = 20
-        if bool(self.options.insanity) and bool(self.options.cadeaux_gated_content):
+        if bool(self.options.cadeauxsanity) and bool(self.options.cadeaux_gated_content):
             _cadeaux_checkable = len(self.cadeaux_bundle_representatives)
             _cadeaux_deficit = (max(0, self.cadeaux_required_logic - _cadeaux_checkable)
                                 + _CADEAUX_SLACK)
@@ -582,11 +619,12 @@ class ShadowManWorld(World):
             sl_thresholds    = self.sl_thresholds_logic,
             entrance_shuffle = self.entrance_shuffle,
             piston_combos    = bool(self.options.piston_combos),
-            insanity         = bool(self.options.insanity),
+            cadeauxsanity    = bool(self.options.cadeauxsanity),
             cadeaux_required = self.cadeaux_required_logic,
             cadeaux_gated_content = bool(self.options.cadeaux_gated_content),
             cadeaux_bundle_representatives = self.cadeaux_bundle_representatives,
             barrel_promoted_locs = self.barrel_promoted_locs,
+            unique_retractor_keys = bool(self.options.unique_retractor_keys),
         )
 
         # "Defeat Legion" -> "Victory" event (2026-07-21). Standard AP
@@ -647,7 +685,7 @@ class ShadowManWorld(World):
                     # (uncapped) threshold than every other cadeaux_666()
                     # check in the seed.
                     self.cadeaux_required_logic,
-                    bool(self.options.insanity),
+                    bool(self.options.cadeauxsanity),
                 )
             _region.add_event(
                 f"{_soul_loc.friendly_name} ({_soul_loc.loc_key})",
@@ -726,7 +764,7 @@ class ShadowManWorld(World):
         # this feature) that were never added here. Every one of those 49
         # names leaked through this "one of every unique item" loop and
         # got created unconditionally, once each, EVERY generation --
-        # regardless of Insanity or cadeaux_bundle_size -- on top of
+        # regardless of Cadeauxsanity or cadeaux_bundle_size -- on top of
         # whatever the dedicated cadeaux_bundle_representatives-driven
         # loop below legitimately creates. open_location_count's math
         # only ever budgets for the dedicated loop's output (one item per
@@ -738,7 +776,7 @@ class ShadowManWorld(World):
         # WHOLE Cadeaux family (not just plain "Cadeaux") is excluded from
         # this blanket loop and left entirely to the dedicated loop below.
         unique_skip = {"Dark Soul", "Retractor", "Accumulator", "Gad Power",
-                       "Jacks Schematic"}
+                       "Jacks Schematic", *RETRACTOR_KEY_ITEM_NAMES.values()}
         for name, data in item_table.items():
             if name in unique_skip or is_cadeaux_item(name):
                 continue
@@ -759,8 +797,21 @@ class ShadowManWorld(World):
                                   _schematic_data.code, self.player))
 
         # Stackable items — fixed counts from STACKABLE_COUNTS
-        for _ in range(STACKABLE_COUNTS["Retractor"]):
-            pool.append(self.create_item("Retractor"))
+        #
+        # Unique Retractor Keys (2026-08-18): when the option is on, the 5
+        # single-copy named items (each with a fixed region identity — see
+        # items.py's RETRACTOR_KEY_ITEM_NAMES) replace the flat fungible
+        # "Retractor" x5 stack entirely, mirroring regions.py's matching
+        # branch in the liveside entrance rules built by create_regions().
+        # Mutually exclusive by design: a seed is either flat-count mode or
+        # named-key mode, never both, so the item pool always contains
+        # exactly 5 retractor-family progression items either way.
+        if bool(self.options.unique_retractor_keys):
+            for _name in RETRACTOR_KEY_ITEM_NAMES.values():
+                pool.append(self.create_item(_name))
+        else:
+            for _ in range(STACKABLE_COUNTS["Retractor"]):
+                pool.append(self.create_item("Retractor"))
         for _ in range(STACKABLE_COUNTS["Accumulator"]):
             pool.append(self.create_item("Accumulator"))
         for _ in range(STACKABLE_COUNTS["Gad Power"]):
@@ -832,7 +883,7 @@ class ShadowManWorld(World):
 
         # Pad with Cadeaux filler so item count matches open location count.
         # Open locations = all location_table entries minus excluded-cadeaux
-        # locations (when insanity is off), which never become AP locations
+        # locations (when cadeauxsanity is off), which never become AP locations
         # at all in that case.
         #
         # BUG FIX (2026-07-24): this used to also subtract len(FIXED_SOUL_LOCS)
@@ -853,13 +904,13 @@ class ShadowManWorld(World):
         # location_table when they never do; only this one actually broke
         # anything observable, since the others were harmless no-ops.
         #
-        # Insanity ("Cadeaux Key Items") gates whether cadeaux-category
-        # locations are AP locations AT ALL (2026-07-21 — see regions.py's
-        # _SKIP_CATS comment; off now means excluded entirely, same as
-        # barrel, not "AP checks restricted to Cadeaux-only items" like the
-        # 2026-07-20 -> 2026-07-21-morning design). So the "Cadeaux" item and
-        # its dedicated supply-matching math below only apply when insanity
-        # is on:
+        # Cadeauxsanity (renamed from "Insanity" 2026-08-23) gates whether
+        # cadeaux-category locations are AP locations AT ALL (2026-07-21 —
+        # see regions.py's _SKIP_CATS comment; off now means excluded
+        # entirely, same as barrel, not "AP checks restricted to
+        # Cadeaux-only items" like the 2026-07-20 -> 2026-07-21-morning
+        # design). So the "Cadeaux" item and its dedicated supply-matching
+        # math below only apply when cadeauxsanity is on:
         #   - off: no cadeaux locations exist for this player at all, so no
         #     "Cadeaux" item is needed either — open_location_count is
         #     reduced by cadeaux_checkable_count to match regions.py
@@ -884,13 +935,13 @@ class ShadowManWorld(World):
         # default bundle size of 1 these two counts are identical (no
         # bundling), so every branch below behaves exactly as before this
         # option existed.
-        insanity = bool(self.options.insanity)
+        cadeauxsanity = bool(self.options.cadeauxsanity)
         total_cadeaux_in_table = sum(
             1 for loc in CHECKABLE_LOCS
             if loc.category == "cadeaux"
         )
-        cadeaux_checkable_count = len(self.cadeaux_bundle_representatives) if insanity else 0
-        if insanity:
+        cadeaux_checkable_count = len(self.cadeaux_bundle_representatives) if cadeauxsanity else 0
+        if cadeauxsanity:
             # Cadeaux Bundle Size (2026-07-27, Jon's report -- a foreign
             # Cadeaux item only granted 1 instead of the expected bundle
             # amount): one item per representative, named for that
@@ -911,7 +962,7 @@ class ShadowManWorld(World):
         # module-level dict, built without knowledge of any per-world
         # option), so open_location_count must be adjusted here or fill ends
         # up with one more location than item (same class of bug as the
-        # insanity/cadeaux_checkable_count case above and the FIXED_SOUL_LOCS
+        # cadeauxsanity/cadeaux_checkable_count case above and the FIXED_SOUL_LOCS
         # bug fixed the same day).
         cadeaux_gated_content = bool(self.options.cadeaux_gated_content)
         cadeaux_666_loc_count = sum(
@@ -919,19 +970,19 @@ class ShadowManWorld(World):
         )
 
         # location_table reserves one ID per cadeaux row unconditionally
-        # (total_cadeaux_in_table), regardless of insanity/bundling -- so
+        # (total_cadeaux_in_table), regardless of cadeauxsanity/bundling -- so
         # the gap between that static reservation and however many are
         # ACTUALLY real locations this seed (cadeaux_checkable_count, 0
-        # when insanity is off) always needs subtracting here. Previously
-        # this was an `if not insanity` branch since bundling didn't exist
-        # yet and insanity=True meant "all of them are real" by
-        # definition; now insanity=True + bundle_size>1 also leaves a gap,
+        # when cadeauxsanity is off) always needs subtracting here. Previously
+        # this was an `if not cadeauxsanity` branch since bundling didn't exist
+        # yet and cadeauxsanity=True meant "all of them are real" by
+        # definition; now cadeauxsanity=True + bundle_size>1 also leaves a gap,
         # so the subtraction has to run unconditionally using the actual
-        # counts rather than being gated on insanity itself.
+        # counts rather than being gated on cadeauxsanity itself.
         # Trap/Bonus barrel promotion (2026-08-01): locations.py now
         # reserves an AP location ID for every "barrel" category row
         # unconditionally (mirrors how cadeaux rows are always reserved
-        # regardless of Insanity — see that file's _SKIP_CATS comment), but
+        # regardless of Cadeauxsanity — see that file's _SKIP_CATS comment), but
         # only the specific loc_keys in self.barrel_promoted_locs actually
         # become real, connected Locations in the region graph (regions.py's
         # create_regions()). Every OTHER barrel row's reserved ID needs the
@@ -1187,14 +1238,15 @@ class ShadowManWorld(World):
         levels_txt_patcher's per-level $cadeaux recount (driven by
         category=="cadeaux" on these synthetic source entries) stays honest.
 
-        Cadeaux slots are AP locations only when insanity ("Cadeaux Key
-        Items") is on (2026-07-21 — see regions.py's _SKIP_CATS; off
-        excludes them from the AP location pool entirely, same as barrel,
-        and create_items() doesn't create any "Cadeaux" item in that case
-        either — see its docstring). So this method is only ever non-empty
-        under insanity: no "Cadeaux" item exists in the pool at all when
-        it's off, so `placed` below is naturally empty and this is a no-op.
-        Under insanity, a Cadeaux item usually lands directly on a native
+        Cadeaux slots are AP locations only when Cadeauxsanity (renamed
+        from "Insanity" 2026-08-23) is on (2026-07-21 — see regions.py's
+        _SKIP_CATS; off excludes them from the AP location pool entirely,
+        same as barrel, and create_items() doesn't create any "Cadeaux"
+        item in that case either — see its docstring). So this method is
+        only ever non-empty under cadeauxsanity: no "Cadeaux" item exists
+        in the pool at all when it's off, so `placed` below is naturally
+        empty and this is a no-op.
+        Under cadeauxsanity, a Cadeaux item usually lands directly on a native
         cadeaux location anyway (see generate_output()'s
         raw_loc.raw.category == "cadeaux" fast path); this donor map only
         matters for the cases where AP's fill put one somewhere else
@@ -1205,7 +1257,7 @@ class ShadowManWorld(World):
         already in use representing itself, so donating it elsewhere would
         double-write the same save_idx to two physical records. A cadeaux
         row whose own location got a DIFFERENT item (e.g. a key item under
-        insanity) is fair game: its physical slot no longer represents a
+        cadeauxsanity) is fair game: its physical slot no longer represents a
         cadeaux at all, so its identity is genuinely free to lend out.
         Cached so generate_output and fill_slot_data always agree.
         """
@@ -1359,15 +1411,15 @@ class ShadowManWorld(World):
 
         No cadeaux item_rule lives here anymore (removed 2026-07-21). It
         used to matter because cadeaux locations were unconditionally real
-        AP locations, with insanity only toggling whether they accepted any
-        item or just our own "Cadeaux" filler — that restriction needed an
-        explicit item_rule since AP's core Fill has no per-location
-        item-type restriction of its own. Now insanity gates whether
+        AP locations, with cadeauxsanity only toggling whether they accepted
+        any item or just our own "Cadeaux" filler — that restriction needed
+        an explicit item_rule since AP's core Fill has no per-location
+        item-type restriction of its own. Now cadeauxsanity gates whether
         cadeaux locations exist as AP locations AT ALL (see regions.py's
         _SKIP_CATS / create_items()'s pool-size math): off means they're
         excluded entirely (same as barrel — no item_rule needed, there's
         nothing to restrict), on means they're included with no
-        restriction (which is exactly what "insanity=True lifts the
+        restriction (which is exactly what "cadeauxsanity=True lifts the
         restriction completely" already meant before). Either way, no
         item_rule is the correct state — see git history if you need the
         old "tight 1:1 bipartite match" reasoning (108-stranded-Cadeaux-item
@@ -1440,7 +1492,6 @@ class ShadowManWorld(World):
             ASYLUM_ENGINE_BLOCK_QUEENS,
         })
         _region_item_bans: dict[str, frozenset[str]] = {
-            "Retractor":       frozenset(LIVESIDE_REGIONS) | _engine_block_subregions,
             "La Lune":         _engine_block_subregions,   # Eclipser 1 (Night)
             "La Lame":         _engine_block_subregions,   # Eclipser 2 (Night)
             "Le Soleil":       _engine_block_subregions,   # Eclipser 3 (Night)
@@ -1449,6 +1500,33 @@ class ShadowManWorld(World):
             "Gad Power":       frozenset({ASYLUM_ENGINE_BLOCK_SALVAGE}),
             "Engineers Key":   frozenset({ASYLUM_ENGINE_BLOCK}) | _engine_block_subregions,
         }
+        # Unique Retractor Keys (2026-08-18): the flat "Retractor" ban above
+        # only applies in flat-count mode. In named-key mode each region has
+        # its own dedicated item (RETRACTOR_KEY_ITEM_NAMES) gating only that
+        # ONE region's entrance (regions.py's create_regions()), not all 5 —
+        # so the self-referential cycle this guard exists to prevent is now
+        # per-region too: "Retractor - Prison" must stay out of
+        # LIVESIDE_PRISON and its own downstream Engine Block room
+        # specifically, but placing it inside London/Florida/Salvage/Queens
+        # or their rooms is perfectly legal (those regions don't require
+        # Prison's key). Tighter than the flat-mode ban on purpose — banning
+        # it from all 5 the way "Retractor" is banned would forbid
+        # placements that are actually safe now that each key has its own
+        # fixed regional identity.
+        if bool(self.options.unique_retractor_keys):
+            _retractor_key_engine_room: dict[str, str] = {
+                "Down Street Station, London": ASYLUM_ENGINE_BLOCK_LONDON,
+                "Gardelle County Jail, Texas": ASYLUM_ENGINE_BLOCK_PRISON,
+                "Summer Camp, Florida":        ASYLUM_ENGINE_BLOCK_FLORIDA,
+                "Salvage Yard, Mojave Desert": ASYLUM_ENGINE_BLOCK_SALVAGE,
+                "Mordant Street, Queens, NY":  ASYLUM_ENGINE_BLOCK_QUEENS,
+            }
+            for _region_name, _item_name in RETRACTOR_KEY_ITEM_NAMES.items():
+                _region_item_bans[_item_name] = frozenset(
+                    {_region_name, _retractor_key_engine_room[_region_name]}
+                )
+        else:
+            _region_item_bans["Retractor"] = frozenset(LIVESIDE_REGIONS) | _engine_block_subregions
 
         # BARREL / PROGRESSION-ITEM GUARD (2026-08-07, generalized from
         # Jon's follow-up: "any progression item that would allow someone
@@ -1521,13 +1599,31 @@ class ShadowManWorld(World):
         Build the placement dict ap_patcher.py (shadow-man-remastered-randomizer
         repo) expects.
 
-        Writes a small portable "*.apshadowman" JSON file into
+        Writes a small portable "*.apshadowman" file into
         output_directory — everything apply_ap_seed.py (same repo, calls
         into ap_patcher.py's run_patcher()) needs to do the actual local
         patching later, with no dependency on this machine having the game
         installed. This is what makes the file safe to bundle into AP's
         hosted multiworld zip (see Main.py: every file in output_directory
         gets zipped flat into AP_<seed>.zip).
+
+        2026-08-31 (Jon's ask): the file itself is now a real zip container
+        (archipelago.json manifest + patch_data.json payload), not a bare
+        JSON file — AP's own hosted-room download route
+        (WebHostLib/downloads.py: download_patch) gates entirely on
+        `zipfile.is_zipfile(...)`, returning "Old Patch file, no longer
+        compatible." for anything that isn't an actual zip, regardless of
+        extension. A bare JSON file (the previous format) downloaded fine
+        when generating and playing locally, but was silently undownloadable
+        from someone else's hosted room — this is what every other AP world
+        already does for exactly that reason, whether or not the world's
+        patch is a real binary rom-patch. The manifest carries
+        "patch_file_ending": ".apshadowman" so the download route can name
+        the file correctly without this world needing to register with AP's
+        AutoPatchRegister (which forbids ".zip" as a registered ending and
+        requires implementing the actual apply-a-binary-patch interface —
+        neither of which fits this world's own out-of-band
+        apply_ap_seed.py-driven patching, see below).
 
         2026-07-21: this used to also support a "hybrid" path — patching
         immediately during generation if a local game_dir option was set,
@@ -1713,7 +1809,7 @@ class ShadowManWorld(World):
                     # NOT a defensive-only fallback in practice — the
                     # item_rule that used to restrict "Cadeaux" items to
                     # cadeaux-category locations was removed 2026-07-21 (see
-                    # set_rules()'s docstring), so under insanity a Cadeaux
+                    # set_rules()'s docstring), so under cadeauxsanity a Cadeaux
                     # filler item can and routinely does land on any
                     # location, including this one. A placed Cadeaux here
                     # carries a donor cadeaux slot's RSC name + save_idx
@@ -1755,7 +1851,7 @@ class ShadowManWorld(World):
         # ALWAYS already has its own entry in progression_placement from
         # the main loop above — sometimes a genuinely different item (e.g.
         # Cadeaux 26 → Engineers Key, Cadeaux 16 → another player's Fire
-        # Arrow) if insanity let something other than "Cadeaux" land there.
+        # Arrow) if cadeauxsanity let something other than "Cadeaux" land there.
         # Unconditionally overwriting `.object`/`.save_idx` destroyed that
         # real placement and turned the location back into an inert
         # unpatched barrel. Confirmed via the user's own patcher log:
@@ -1822,7 +1918,16 @@ class ShadowManWorld(World):
         config = {
             "shuffle_progression":   True,
             "gate_preset":           self.options.gate_preset.current_key,
-            "shuffle_gad_temples":   bool(self.options.shuffle_gad_temples),
+            # shuffle_gad_temples removed here (2026-08-18, following the
+            # 2026-08-15 options.py removal — see UniqueRetractorKeys's
+            # neighboring comment in options.py for the full story): the
+            # option no longer exists on self.options at all, and
+            # ap_patcher.py's run_patcher() dropped the parameter in the
+            # same 2026-08-15 pass, so this was dead data being read off a
+            # nonexistent attribute — AttributeError on every AP generate,
+            # not just ones with unique_retractor_keys on. Gad temples are
+            # unconditionally normal shuffled pickups now; nothing downstream
+            # needs this key anymore.
             "shuffle_weapons":       bool(self.options.shuffle_weapons),
             "shuffle_lore":          bool(self.options.shuffle_lore),
             "shuffle_bonus":         bool(self.options.shuffle_bonus),
@@ -1838,9 +1943,10 @@ class ShadowManWorld(World):
             "shuffle_voices":        bool(self.options.shuffle_voices),
             "shuffle_weapons_sfx":   bool(self.options.shuffle_weapons_sfx),
             "shuffle_enemies_sfx":   bool(self.options.shuffle_enemies_sfx),
+            "combine_voice_and_enemy_sfx": bool(self.options.combine_voice_and_enemy_sfx),
             "shuffle_sky":           bool(self.options.shuffle_sky),
             "progression_balancing": int(self.options.progression_balancing),
-            "insanity":              bool(self.options.insanity),
+            "cadeauxsanity":         bool(self.options.cadeauxsanity),
             "starting_health":       int(self.options.starting_health),
             "altar_health_grant":    int(self.options.altar_health_grant),
             "altar_cadeaux_required":      int(self.options.altar_cadeaux_required),
@@ -1898,7 +2004,43 @@ class ShadowManWorld(World):
             # pipeline in the first place).
             "trap_bonus_count": int(self.options.trap_bonus_count),
             "trap_bonus_secrets_enabled": bool(self.options.trap_bonus_secrets_enabled),
+            # Unique Retractor Keys (2026-08-18) — plain bool (not the
+            # "on"/"off" string piston_combos uses above; that convention is
+            # specific to how dark_engine_patch.randomize_dark_engine() reads
+            # it). ap_patcher.py's Step 7 gates the whole exe-patch block on
+            # config.get("unique_retractor_keys", False); the actual
+            # placement data it needs lives in the top-level
+            # "retractor_key_locs" key below, not here.
+            "unique_retractor_keys": bool(self.options.unique_retractor_keys),
         }
+
+        # Unique Retractor Keys (2026-08-18) — {liveside_region_name: loc_key}
+        # for wherever AP's own Fill placed each of the 5 named
+        # "Retractor - <region>" items in THIS player's own world. Only
+        # self-found placements are meaningful here: a copy sent to another
+        # player's game has no physical Shadow Man pickup in this world at
+        # all (it's granted remotely at runtime via client.py instead), so
+        # there's nothing for ap_patcher.py's position table to resolve for
+        # that one. Same "which loc_key did fill actually place THIS unique
+        # item at" pattern fill_slot_data()'s inventory_flag_locs already
+        # uses for one-of-a-kind items — retractor keys need identical
+        # treatment despite living in items.py's "stackable-shaped" section.
+        # Deliberately keyed by region name (not by item name): this exact
+        # shape is what unique_retractor_keys_patch.build_retractor_table_from_ap()
+        # expects, matching LIVESIDE_TO_IVAR1's own keys one-for-one, so
+        # ap_patcher.py needs no extra name->region translation step.
+        retractor_key_locs: dict[str, str] = {}
+        if bool(self.options.unique_retractor_keys):
+            _item_to_region = {v: k for k, v in RETRACTOR_KEY_ITEM_NAMES.items()}
+            for _loc in self.multiworld.get_locations(self.player):
+                _item = _loc.item
+                if (_item is not None
+                        and _item.player == self.player
+                        and _item.name in _item_to_region
+                        and hasattr(_loc, "raw")):
+                    _region = _item_to_region[_item.name]
+                    if _region not in retractor_key_locs:
+                        retractor_key_locs[_region] = _loc.raw.loc_key
 
         # ── Always: write the portable patch-data file ──────────────────────
         # Safe for AP's hosting zip — small JSON, no game files touched, no
@@ -1950,11 +2092,42 @@ class ShadowManWorld(World):
                 }
                 for loc_key, raw in progression_placement.items()
             },
+            # Unique Retractor Keys (2026-08-18) — see the comment where
+            # retractor_key_locs is built above. {} when the option is off,
+            # matching every other AP seed's absence of this key gracefully
+            # (apply_ap_seed.py reads it via .get("retractor_key_locs", {})).
+            "retractor_key_locs": retractor_key_locs,
         }
         patch_data_path = (Path(output_directory) /
                             f"{self.multiworld.get_out_file_name_base(self.player)}.apshadowman")
-        with open(patch_data_path, "w", encoding="utf-8") as f:
-            json.dump(portable_patch_data, f)
+
+        # Real zip container (2026-08-31, Jon's ask) -- see generate_output()'s
+        # own docstring above for why this can't be a bare JSON file anymore.
+        # Deliberately hand-rolled rather than subclassing worlds.Files'
+        # APContainer/APPatch: those pull in AutoPatchRegister's "must
+        # implement patch(), can't use .zip as your own ending" requirements,
+        # which don't fit this world's out-of-band apply_ap_seed.py flow --
+        # all that actually matters for AP's hosted-download route is that
+        # the bytes are a real zip and archipelago.json carries
+        # "patch_file_ending", both of which this satisfies directly.
+        manifest = {
+            "compatible_version": 6,
+            "version": 6,
+            "game": "Shadow Man Remastered",
+            # Left blank at generation time, same as AP's own
+            # APPlayerContainer default -- WebHostLib's download_patch route
+            # fills this in itself for a real hosted room; nothing here reads
+            # it back (our client.py's connect panel takes server/name/
+            # password from the player directly, see overlay_dll).
+            "server": "",
+            "player": self.player,
+            "player_name": self.multiworld.get_file_safe_player_name(self.player),
+            "patch_file_ending": ".apshadowman",
+            "procedure": "custom",
+        }
+        with zipfile.ZipFile(patch_data_path, "w", zipfile.ZIP_DEFLATED, True, 9) as zf:
+            zf.writestr("archipelago.json", json.dumps(manifest))
+            zf.writestr("patch_data.json", json.dumps(portable_patch_data))
 
     # ── Slot data ─────────────────────────────────────────────────────────────
 
@@ -1984,8 +2157,42 @@ class ShadowManWorld(World):
         (for instance_id-based lookup) until the extraction tool has been run
         to populate them. x/y/z are unaffected by this and still included.
         """
+        # BUG FIX (2026-08-23, Jon's report — dark soul pickups not logging
+        # as checks): this loop used to iterate location_table.items()
+        # UNCONDITIONALLY — that's the full, per-seed-independent static
+        # catalog, not the subset of locations regions.py's create_regions()/
+        # _build_sub_regions() actually instantiated as real Locations this
+        # seed (it applies its own skip_cats/skip_loc_keys/_cadeaux_ok
+        # filtering — see that file's _SKIP_CATS/CADEAUX_666_LOCS/
+        # cadeaux_bundle_representatives — e.g. EVERY "cadeaux" category
+        # location is entirely excluded whenever the cadeauxsanity option is
+        # off, "barrel" is excluded unconditionally, and non-representative
+        # rows are excluded under Cadeaux Bundle Size). Every one of those
+        # excluded rows stays physically untouched/vanilla in-game — see
+        # regions.py's own "never becomes an AP location, stays physically
+        # untouched/vanilla" docstring language — yet was still showing up
+        # in slot_data's location_map with its own real ap_id and native
+        # save_idx. client.py's live dark-soul-flag-array watcher resolves
+        # ANY (level, save_idx) via this table with no awareness that the
+        # location behind it was never actually created — so an entirely
+        # ordinary VANILLA pickup (e.g. a Cadeaux, with cadeauxsanity off) logs
+        # a successful "resolved to ap_id=..." line and attempts a
+        # LocationChecks send for an ap_id the server never registered for
+        # this player, which the server just silently drops: no item, no
+        # "found their X" notification, no error either — exactly Jon's
+        # report. Filtered to the real, this-seed location set (same
+        # pattern already used correctly by _soul_identity_map()'s `placed`
+        # a few methods up, and by inventory_flag_locs just below) so
+        # phantom/vanilla rows never reach the client's live watchers at
+        # all.
+        _real_loc_keys = {
+            loc.raw.loc_key for loc in self.multiworld.get_locations(self.player)
+            if hasattr(loc, "raw")
+        }
         location_map: Dict[str, Any] = {}
         for loc_name, loc_data in location_table.items():
+            if loc_name not in _real_loc_keys:
+                continue
             raw = loc_data.raw
             iid = getattr(raw, "save_idx", None)
             if iid is None:
@@ -2091,6 +2298,14 @@ class ShadowManWorld(World):
             # this dict has no reason to match that unrelated convention;
             # see the matching read-side fix in client.py's on_package()).
             "piston_combos":       bool(self.options.piston_combos),
+            # Unique Retractor Keys (2026-08-18) — plain bool, same
+            # slot_data pattern as piston_combos just above. Read by
+            # client.py's on_package() into self.unique_retractor_keys_on,
+            # used by _go_mode_prerequisites() to show the 5 named keys
+            # individually instead of the flat "Retractors x/5" count (which
+            # would always misreport 0/5 in this mode — there's no fungible
+            # "Retractor" item in the pool at all when this option is on).
+            "unique_retractor_keys": bool(self.options.unique_retractor_keys),
             # Universal Tracker support (2026-07-28, see generate_early()'s
             # UT-passthrough comment and interpret_slot_data() below for
             # the full rationale). Neither of these two keys existed in

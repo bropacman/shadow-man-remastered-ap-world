@@ -188,7 +188,7 @@ def apply_true_form_remap(loc_key_remap: dict[str, str] | None) -> list:
 #
 # Single source of truth: maps each slot category to the set of item categories
 # that may be placed there. The candidate filter uses this directly.
-# insanity mode bypasses these restrictions entirely.
+# cadeauxsanity mode bypasses these restrictions entirely.
 
 SLOT_ACCEPTS: dict[str, frozenset[str]] = {
     # Soul-eligible slots — only soul items go here
@@ -336,6 +336,88 @@ REGION_GATES: dict[str, object] = {
     "Temple of Blood (Nager)"      : "GATE_DEADSIDE_BLOOD",
     "Asylum: The Fogometers"       : "GATE_DEADSIDE_FOGOMETERS",
 }
+
+# ── Depth buckets (physical progression within a level) ───────────────────────
+#
+# round_robin_by_group() (regions.py) diversifies barrel promotion and cadeaux
+# bundling by grouping candidates on (level_region, gate_raw) before picking —
+# see that function's own docstring. That grouping only ever differentiates by
+# AP LOGIC requirement, which is nearly always None ("free") for liveside
+# interiors: a liveside region's own entrance rule (Retractors + SL2, or the
+# matching named key) lives on the region CONNECTION in regions.py, not on
+# individual locations inside it, so almost every liveside barrel/cadeaux
+# collapses into one (level_region, None) group regardless of how far into
+# the level it physically sits (Jon's observation, 2026-08-18: "liveside
+# levels are interesting locations, but a lot of NULL checks on their
+# subregion access rules... level depth can be just as interesting as
+# sub-region access rules").
+#
+# DEPTH_BUCKETS adds that missing dimension using data that's already
+# extracted and already sitting unused for this purpose: each RawLocation's
+# `zone` field (the RSC record's own sector tag — currently only consulted
+# as a display-name sort key in locations.py). Zone empirically increases as
+# you move through a level, so it's a ready-made proxy for physical depth
+# that needs no new hand-curated data.
+#
+# Bucketing is RANK-based per level_region (pooling every level_id that
+# shares a level_region — e.g. Louisiana Swampland's swampday/swampnit pair,
+# or Asylum: Engine Block's 6-way schism split, where each named sub-region
+# only ever sees its own subset of as4dkeng's locations): take every
+# DISTINCT zone value that region's CHECKABLE_LOCS entries use, sort them,
+# and split into 3 near-equal groups by RANK rather than by raw numeric
+# value. Rank-based splitting degrades gracefully regardless of how skewed
+# or gappy a level's zone numbers are (e.g. as4dkeng's zones span 0-30 but
+# only 25 distinct values actually occur) — a value-based split (e.g.
+# "bottom third of the numeric range") would badly misbucket a level whose
+# zones cluster unevenly instead of spreading evenly across the level.
+#
+# Verified against the real data before wiring this in: for Down Street
+# Station (London) and Louisiana Swampland — the two liveside regions with a
+# meaningful population of ungated ("free") quest.rsc barrel candidates —
+# this genuinely splits what was one flat bucket into a real 0/1/2 spread
+# (London: 41/63/8, Swampland: 6/8/8) rather than a degenerate all-one-bucket
+# result.
+def _zone_int(loc) -> int | None:
+    try:
+        return int(loc.zone) if loc.zone is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _compute_depth_buckets() -> dict[str, int]:
+    by_region: dict[str, set] = {}
+    for loc in CHECKABLE_LOCS:
+        z = _zone_int(loc)
+        if z is not None:
+            by_region.setdefault(loc.level_region, set()).add(z)
+
+    # rank -> bucket index (0=early, 1=mid, 2=late), computed once per region
+    region_rank: dict[str, dict] = {}
+    for region, zones in by_region.items():
+        ordered = sorted(zones)
+        n = len(ordered)
+        region_rank[region] = {z: min(2, (i * 3) // n) for i, z in enumerate(ordered)}
+
+    # Locations with an unparseable/missing zone (none exist in the data as
+    # of 2026-08-18, but the CSV is hand-edited, so this stays defensive
+    # rather than raising) fall back to bucket 1 (mid) — a neutral default
+    # that neither favors nor disfavors them in round_robin_by_group, and
+    # importantly is never added to region_rank's population, so it can't
+    # skew the tertile cutoffs for locations that DO have a real zone.
+    result: dict[str, int] = {}
+    for loc in CHECKABLE_LOCS:
+        z = _zone_int(loc)
+        rank_map = region_rank.get(loc.level_region)
+        result[loc.loc_key] = rank_map.get(z, 1) if (rank_map and z is not None) else 1
+    return result
+
+
+# Computed once at import time — CHECKABLE_LOCS is static per-checkout data
+# (from extracted_locations.py), not per-seed, so there's no reason to pay
+# this cost on every generate_early() call the way round_robin_by_group()
+# itself (genuinely per-seed, rng-driven) has to be.
+DEPTH_BUCKETS: dict[str, int] = _compute_depth_buckets()
+
 
 VANILLA_GAD_REGIONS: list[str] = [
     "Temple of Fire (Toucher)",
@@ -942,7 +1024,7 @@ def assumed_fill(
     lock_gates: frozenset[str] = frozenset(),
     max_sl: int | None = None,
     safe: bool = True,
-    insanity: bool = False,
+    cadeauxsanity: bool = False,
     shuffle_weapons: bool = True,
     shuffle_lore: bool = True,
     shuffle_bonus: bool = False,
@@ -990,7 +1072,7 @@ def assumed_fill(
     if not shuffle_gad_temples:
         active_slot_cats.discard("gad")
 
-    if insanity:
+    if cadeauxsanity:
         candidate_pool = [
             l for l in CHECKABLE_LOCS
             if l.loc_key not in EXCLUDED_LOCS
@@ -1146,7 +1228,7 @@ def assumed_fill(
         )
 
         def _slot_ok(loc) -> bool:
-            if insanity:
+            if cadeauxsanity:
                 return True
             return item.category in SLOT_ACCEPTS.get(loc.category, frozenset())
 

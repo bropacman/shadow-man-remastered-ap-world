@@ -13,7 +13,8 @@ from .access_rules import (
 )
 from .extracted_locations import FREE_LOCATIONS, GATED_LOCATIONS
 from .locations import location_table, FRIENDLY_NAMES
-from .fill import CADEAUX_666_LOCS
+from .fill import CADEAUX_666_LOCS, DEPTH_BUCKETS
+from .items import RETRACTOR_KEY_ITEM_NAMES
 
 # ── Region name constants ─────────────────────────────────────────────────────
 
@@ -124,11 +125,13 @@ def _connect(source: Region, target: Region, rule=None, name: str | None = None)
 # of any option.
 #
 # "cadeaux" is conditionally excluded here (2026-07-21): whether cadeaux
-# pickups become real AP locations at all is now gated on the Insanity
-# ("Cadeaux Key Items") option, not unconditional. Previously (2026-07-20 —
+# pickups become real AP locations at all is now gated on the Cadeauxsanity
+# option (renamed from "Insanity" 2026-08-23 to avoid colliding with the
+# standalone randomizer's differently-scoped graded "insanity" tiers), not
+# unconditional. Previously (2026-07-20 —
 # 2026-07-21 morning) cadeaux locations always existed as AP checks, with
-# insanity only toggling an item_rule restriction in __init__.py's
-# set_rules() (Cadeaux-only vs any item). That meant turning insanity off
+# cadeauxsanity only toggling an item_rule restriction in __init__.py's
+# set_rules() (Cadeaux-only vs any item). That meant turning cadeauxsanity off
 # still surfaced ~657 cadeaux checks/hints in the tracker — not what an
 # "optional as a location" toggle should do. Off now means excluded
 # entirely, same as barrel; on means real AP locations with no restriction
@@ -198,6 +201,86 @@ def round_robin_by_group(rng, items: list, key_fn, n: int | None = None) -> list
             break
         round_idx += 1
     return result
+
+
+def nested_round_robin_by_group(rng, items: list, key_fns: list, n: int | None = None) -> list:
+    """
+    Level-spread fix (2026-08-18, Jon's follow-up to the depth-bucket pass
+    above: "otherwise the levels with the most checks are gonna have all
+    the location checks in them most likely, like the temple levels and
+    certain asylum levels"). round_robin_by_group() above is a single flat
+    grouping pass — every distinct key_fn(item) value is a sibling group
+    competing equally for round-robin turns, REGARDLESS of what tier that
+    group belongs to. Once barrel promotion's key became (level_region,
+    gate_raw, depth_bucket), that stopped being harmless: a level that
+    happens to fan out into more (gate, depth) sub-groups gets that many
+    MORE total picks than a level that only fans out into one or two, purely
+    as a side effect of AP logic granularity or raw candidate volume — not
+    because more spread was actually wanted. Confirmed empirically before
+    writing this fix (n=200 barrel promotion, same seed): the flat 3-tuple
+    key gave Asylum: Engine Block (as4dkeng, 6 AP regions x several gates)
+    23 picks while Underground/Cageways/Cathedral of Pain (1-2 sub-groups
+    each) got as few as 6 — a ~4x disparity, exactly Jon's prediction.
+
+    This function makes grouping HIERARCHICAL instead of flat: key_fns is
+    an ORDERED list, outermost tier first (e.g. [level_id, level_region,
+    gate_raw, depth_bucket]). At every tier, items are grouped by that
+    tier's key_fn and round-robin-interleaved — but each group's internal
+    order is itself already a full round-robin ordering from the tier
+    below, computed recursively. The result: a group at the OUTER tier
+    (e.g. one physical level) gets exactly one turn per round no matter how
+    many INNER-tier sub-groups it happens to contain — a level with 8
+    (gate, depth) combinations and a level with 1 still each get 1 pick per
+    round at the level tier, then whichever level's turn it is draws from
+    its own already-diversified inner ordering. Re-running the same n=200
+    barrel-promotion scenario with key_fns=[level_id, level_region,
+    gate_raw, depth_bucket] (same seed) flattened the 6-23 range above down
+    to 12-13 across all 16 levels — every level within one pick of a
+    perfectly even 200/16 = 12.5 share.
+
+    Base case (deepest tier, or a group of size <=1): just an rng.shuffle()
+    — same as round_robin_by_group()'s own per-group shuffle, so which
+    SPECIFIC item comes out of a leaf group is still fully random, only the
+    INTERLEAVING at every tier above it is structured.
+
+    n=None returns every item reordered (nothing dropped). A concrete n
+    truncates the fully-ordered result to the first n items — same
+    semantics as round_robin_by_group()'s own n parameter, and for the same
+    reason: the top of a hierarchical round-robin order is exactly the set
+    you'd want for a smaller, still-fairly-spread subset.
+    """
+    def _recurse(subitems: list, depth: int) -> list:
+        if depth >= len(key_fns) or len(subitems) <= 1:
+            shuffled = list(subitems)
+            rng.shuffle(shuffled)
+            return shuffled
+
+        key_fn = key_fns[depth]
+        groups: dict = {}
+        for it in subitems:
+            groups.setdefault(key_fn(it), []).append(it)
+        keys = list(groups.keys())
+        rng.shuffle(keys)
+
+        # Each sub-group is already a complete round-robin ordering from
+        # every tier below this one — recursing BEFORE interleaving is what
+        # makes this hierarchical rather than just a deeper flat grouping.
+        ordered_subgroups = [_recurse(groups[k], depth + 1) for k in keys]
+
+        result: list = []
+        round_idx = 0
+        progressed = True
+        while progressed:
+            progressed = False
+            for sub in ordered_subgroups:
+                if round_idx < len(sub):
+                    result.append(sub[round_idx])
+                    progressed = True
+            round_idx += 1
+        return result
+
+    ordered = _recurse(items, 0)
+    return ordered if n is None else ordered[:min(n, len(ordered))]
 
 
 def compute_cadeaux_bundle_representatives(bundle_size: int, rng) -> dict[str, int]:
@@ -347,8 +430,42 @@ def compute_cadeaux_bundle_representatives(bundle_size: int, rng) -> dict[str, i
     # below are otherwise unchanged, so the total achievable cadeaux value
     # is still fully conserved (sum of weights == total checkable cadeaux
     # count) regardless of this reordering.
-    all_cadeaux = round_robin_by_group(
-        rng, all_cadeaux_raw, key_fn=lambda l: (l.level_region, l.gate_raw))
+    #
+    # Depth-bucket dimension (2026-08-18, Jon's idea): (level_region,
+    # gate_raw) alone still leaves liveside interiors nearly undiversified,
+    # since gate_raw is None for almost every liveside cadeaux row (the
+    # region's own entrance rule lives on the region CONNECTION, not on
+    # individual locations) -- most liveside cadeaux collapsed into one
+    # (region, None) group regardless of how far into the level they
+    # physically sit. fill.py's DEPTH_BUCKETS adds a third grouping
+    # dimension -- early/mid/late thirds of that region's own zone range,
+    # via the RSC record's own sector tag -- so that flat group now splits
+    # by physical progression too, same reasoning as barrel promotion's
+    # identical addition in __init__.py's generate_early(). See
+    # DEPTH_BUCKETS's own docstring in fill.py for the full derivation and
+    # real-data verification.
+    #
+    # Level-spread fix (2026-08-18, Jon's follow-up: "otherwise the levels
+    # with the most checks are gonna have all the location checks in them
+    # most likely, like the temple levels and certain asylum levels"). A
+    # flat (level_region, gate_raw, depth_bucket) key still let a level that
+    # happens to fan out into more sub-groups (more gates, or a region split
+    # like Engine Block's 6-way schism division) dominate purely from having
+    # more competing groups, not because more of its cadeaux were actually
+    # wanted. nested_round_robin_by_group() makes the grouping hierarchical
+    # instead -- level_id gets the outermost round-robin tier, so every
+    # PHYSICAL level gets one turn per round regardless of how many
+    # sub-groups it fans out into beneath that -- see that function's own
+    # docstring for the full rationale and the real-data verification (a
+    # ~4x per-level disparity flattened to within one pick of dead-even).
+    all_cadeaux = nested_round_robin_by_group(
+        rng, all_cadeaux_raw,
+        key_fns=[
+            lambda l: l.level_id,
+            lambda l: l.level_region,
+            lambda l: l.gate_raw,
+            lambda l: DEPTH_BUCKETS.get(l.loc_key, 1),
+        ])
 
     for i in range(0, len(all_cadeaux), bundle_size):
         chunk = all_cadeaux[i:i + bundle_size]
@@ -365,18 +482,18 @@ def _build_sub_regions(
     location_factory,
     sl_thresholds: dict[int, int] | None = None,
     piston_combos: bool = False,
-    insanity: bool = False,
+    cadeauxsanity: bool = False,
     cadeaux_required: int | None = None,
     cadeaux_gated_content: bool = False,
     cadeaux_bundle_representatives: dict[str, int] | None = None,
     barrel_promoted_locs: frozenset[str] | None = None,
 ) -> None:
-    skip_cats = _SKIP_CATS if insanity else (_SKIP_CATS | {"cadeaux"})
+    skip_cats = _SKIP_CATS if cadeauxsanity else (_SKIP_CATS | {"cadeaux"})
 
     # Secret Trap barrel promotion (2026-08-01): "barrel" is already in
     # skip_cats unconditionally (via module-level _SKIP_CATS above) — this
     # is a per-loc_key EXCEPTION to that, not a category-wide toggle like
-    # cadeaux/insanity. Mirrors _cadeaux_ok() below in shape, just inverted
+    # cadeaux/cadeauxsanity. Mirrors _cadeaux_ok() below in shape, just inverted
     # (an inclusion list becoming a further restriction, vs. an exclusion
     # list becoming a specific exception).
     def _category_ok(raw) -> bool:
@@ -397,7 +514,7 @@ def _build_sub_regions(
     # the chosen bundle representatives; every other cadeaux row is treated
     # as if it were in skip_cats (excluded, stays vanilla). None (or bundle
     # size <= 1) means "no bundling" -- every cadeaux row passes, matching
-    # pre-bundling behavior exactly. This check is a no-op whenever insanity
+    # pre-bundling behavior exactly. This check is a no-op whenever cadeauxsanity
     # is off, since "cadeaux" is already fully excluded via skip_cats by
     # then regardless of bundle membership.
     def _cadeaux_ok(raw) -> bool:
@@ -455,13 +572,13 @@ def _build_sub_regions(
             sub.locations.append(loc)
 
         multiworld.regions.append(sub)
-        # cadeaux_trackable=insanity: Cadeaux locations (and thus the
-        # "Cadeaux" AP item) only exist in the pool when Insanity is on
+        # cadeaux_trackable=cadeauxsanity: Cadeaux locations (and thus the
+        # "Cadeaux" AP item) only exist in the pool when Cadeauxsanity is on
         # (see __init__.py's _cadeaux_identity_map docstring) — R.cadeaux_666()
         # falls back to always-True when it's off, matching the pre-2026-07-24
         # behavior for that mode (see cadeaux_666()'s docstring in access_rules.py).
         rule_fn = make_location_rule(gate_expr, gate_values, player, sl_thresholds,
-                                      piston_combos, cadeaux_required, insanity)
+                                      piston_combos, cadeaux_required, cadeauxsanity)
         # sub_name already carries the "[gate_raw]" bracket tag and a unique
         # level prefix, so it doubles as a clean, collision-free entrance name.
         _connect(level_region, sub, rule=rule_fn, name=sub_name)
@@ -476,11 +593,12 @@ def create_regions(
     sl_thresholds: dict[int, int] | None = None,
     entrance_shuffle: dict[str, str] | None = None,
     piston_combos: bool = False,
-    insanity: bool = False,
+    cadeauxsanity: bool = False,
     cadeaux_required: int | None = None,
     cadeaux_gated_content: bool = False,
     cadeaux_bundle_representatives: dict[str, int] | None = None,
     barrel_promoted_locs: frozenset[str] | None = None,
+    unique_retractor_keys: bool = False,
 ) -> None:
     """
     Called from ShadowManWorld.create_regions().
@@ -507,12 +625,13 @@ def create_regions(
                    require_schematic= argument).
     location_factory: ShadowManLocation constructor, passed in to avoid
                       circular imports between regions.py and locations.py.
-    insanity: this world's Insanity ("Cadeaux Key Items") option — when
-                   False, cadeaux-category locations are excluded from the
-                   AP location pool entirely (same treatment as "barrel",
-                   see _SKIP_CATS above); when True they're included with no
-                   item-type restriction. Threaded down into
-                   _build_sub_regions() below.
+    cadeauxsanity: this world's Cadeauxsanity option (renamed from
+                   "Insanity" 2026-08-23) — when False, cadeaux-category
+                   locations are excluded from the AP location pool
+                   entirely (same treatment as "barrel", see _SKIP_CATS
+                   above); when True they're included with no item-type
+                   restriction. Threaded down into _build_sub_regions()
+                   below.
     cadeaux_required: this world's resolved fogometers_cadeaux_required
                    option value (see __init__.py) — the real Cadeaux count
                    R.cadeaux_666() gates on (2026-07-24 fix; it used to
@@ -548,6 +667,16 @@ def create_regions(
                    cadeaux_bundle_representatives just above. None means no
                    barrels promoted (every barrel row stays excluded, same
                    as before this feature existed).
+    unique_retractor_keys: this world's UniqueRetractorKeys option (see
+                   options.py) — when True, each liveside region's entrance
+                   rule (below) requires that region's own dedicated
+                   "Retractor - <region>" item (see items.py's
+                   RETRACTOR_KEY_ITEM_NAMES) instead of the vanilla flat
+                   "any 5 Retractors" count. No separate per-seed assignment
+                   step is needed here (unlike the standalone randomizer's
+                   retractor_level_assignment) — each named item already has
+                   a fixed region identity, so AP's own fill decides where
+                   each one lands, same as any other progression item.
     """
     # ── Create all regions ────────────────────────────────────────────────────
     regions: dict[str, Region] = {}
@@ -733,6 +862,12 @@ def create_regions(
     # SL2 is unaffected by gate shuffle (it's not a coffin gate) — R.sl2()
     # used directly rather than R.gate(). It IS affected by soul_threshold_mode
     # though, so sl_thresholds is still passed through (see 2026-07-20 fix).
+    # Unique Retractor Keys (2026-08-18): when on, each region's rule swaps
+    # the flat >=5 count for state.has() on that region's own dedicated
+    # "Retractor - <region>" item — ki=_key_item captures the loop variable
+    # by default-arg, same pattern p=player/st=sl_thresholds already use
+    # here, so each closure keeps its own region's item name instead of all
+    # five sharing whatever `level` happens to be after the loop ends.
     for level in (
         LIVESIDE_LONDON,
         LIVESIDE_FLORIDA,
@@ -740,15 +875,27 @@ def create_regions(
         LIVESIDE_QUEENS,
         LIVESIDE_SALVAGE,
     ):
-        _connect(
-            regions[ASYLUM_CATHEDRAL],
-            regions[level],
-            rule=lambda state, p=player, st=sl_thresholds: (
-                R.sl2(state, p, _soul_thresholds=st) and
-                state.count("Retractor", p) >= 5
-            ),
-            name=f"{level} [SL2 + 5 Retractors]",
-        )
+        if unique_retractor_keys:
+            _key_item = RETRACTOR_KEY_ITEM_NAMES[level]
+            _connect(
+                regions[ASYLUM_CATHEDRAL],
+                regions[level],
+                rule=lambda state, p=player, st=sl_thresholds, ki=_key_item: (
+                    R.sl2(state, p, _soul_thresholds=st) and
+                    state.has(ki, p)
+                ),
+                name=f"{level} [SL2 + {_key_item}]",
+            )
+        else:
+            _connect(
+                regions[ASYLUM_CATHEDRAL],
+                regions[level],
+                rule=lambda state, p=player, st=sl_thresholds: (
+                    R.sl2(state, p, _soul_thresholds=st) and
+                    state.count("Retractor", p) >= 5
+                ),
+                name=f"{level} [SL2 + 5 Retractors]",
+            )
 
     # ── Liveside → Engine Block sections (Night + special item) ──────────────
     engine_rules = {
@@ -787,6 +934,6 @@ def create_regions(
         _build_sub_regions(
             regions[name], name, multiworld, player,
             gate_values, location_factory, sl_thresholds, piston_combos,
-            insanity, cadeaux_required, cadeaux_gated_content,
+            cadeauxsanity, cadeaux_required, cadeaux_gated_content,
             cadeaux_bundle_representatives, barrel_promoted_locs,
         )

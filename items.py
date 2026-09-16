@@ -114,6 +114,25 @@ _ITEM_DEFINITIONS = [
     ("Accumulator",           ItemClassification.progression),
     ("Gad Power",             ItemClassification.progression),
 
+    # ── Unique Retractor Keys (2026-08-18) ────────────────────────────────────
+    # 5 distinctly-named, single-copy progression items, one per liveside
+    # region -- an alternative to the flat "Retractor" x5 stack above. Only
+    # created by create_items() when options.py's UniqueRetractorKeys is on
+    # (mutually exclusive with the fungible "Retractor" entry -- see
+    # __init__.py's create_items() branch); always reserved here regardless
+    # of the option, matching this file's existing "static superset, only
+    # instantiate what a given seed uses" pattern (see CADEAUX_MAX_BUNDLE's
+    # comment above). Keys/values duplicated from RETRACTOR_KEY_ITEM_NAMES
+    # below deliberately kept in this same file (single source of truth),
+    # unlike the LIVESIDE_* region-name duplication elsewhere in this
+    # codebase, which has to be duplicated across files to avoid a circular
+    # import (see access_rules.py's own comment on that).
+    ("Retractor - London",    ItemClassification.progression),
+    ("Retractor - Prison",    ItemClassification.progression),
+    ("Retractor - Florida",   ItemClassification.progression),
+    ("Retractor - Salvage",   ItemClassification.progression),
+    ("Retractor - Queens",    ItemClassification.progression),
+
     # ── Weapons ───────────────────────────────────────────────────────────────
     ("Asson",                ItemClassification.useful),
     ("Shotgun",              ItemClassification.useful),
@@ -334,6 +353,35 @@ STACKABLE_COUNTS: dict[str, int] = {
     "Accumulator": 3,
     "Gad Power":   3,
     # "Dark Soul" count is set dynamically — see __init__.py
+    # NOTE: the 5 "Retractor - <region>" items (unique_retractor_keys mode)
+    # are deliberately NOT listed here -- each is a single-copy item, not a
+    # stack, so STACKABLE_COUNTS doesn't apply. See RETRACTOR_KEY_ITEM_NAMES
+    # below and __init__.py's create_items().
+}
+
+# ── Unique Retractor Keys (2026-08-18) ─────────────────────────────────────────
+# Maps each liveside region's full display name to its dedicated Retractor
+# item name (see _ITEM_DEFINITIONS above). Static/fixed, not per-seed
+# randomized -- unlike the standalone randomizer's retractor_level_assignment
+# (which has to randomly decide which NATIVE retractor pickup unlocks which
+# region, since standalone's 5 retractors are otherwise identical/fungible),
+# AP's fill naturally handles "where is each key found" on its own once the
+# item itself has a fixed identity: Fill can place "Retractor - Prison"
+# anywhere logic allows (own world or another player's), same as any other
+# named progression item, so no separate assignment step is needed here.
+#
+# Keys are string literals, not the LIVESIDE_* constants from regions.py --
+# regions.py imports from this module (`from .items import ...`), so
+# importing back from regions.py here would be circular. Must exactly match
+# regions.py's LIVESIDE_LONDON/LIVESIDE_PRISON/LIVESIDE_FLORIDA/
+# LIVESIDE_SALVAGE/LIVESIDE_QUEENS values (same convention access_rules.py
+# already uses for its own duplicated _LIVESIDE_* constants).
+RETRACTOR_KEY_ITEM_NAMES: dict[str, str] = {
+    "Down Street Station, London": "Retractor - London",
+    "Gardelle County Jail, Texas": "Retractor - Prison",
+    "Summer Camp, Florida":        "Retractor - Florida",
+    "Salvage Yard, Mojave Desert": "Retractor - Salvage",
+    "Mordant Street, Queens, NY":  "Retractor - Queens",
 }
 
 # ── RSC name mapping ──────────────────────────────────────────────────────────
@@ -344,6 +392,17 @@ AP_ITEM_TO_RSC: dict[str, str] = {
     "Retractor":   "RSC_X_RETRACT",
     "Accumulator": "RSC_X_ACCUMULATOR",
     "Gad Power":   "RSC_X_GAD_PICKUP",
+    # Unique Retractor Keys: all 5 write back to the same RSC pickup as
+    # plain "Retractor" -- world identity is 100% position-based at the exe
+    # level (unique_retractor_keys_patch.py's per-portal CF_CUSTOM flags),
+    # not RSC-name-based, so any of RSC_X_RETRACT/RETRACT1/RETRACT2 can back
+    # any of these 5 AP items without conflict. Matches the standalone
+    # randomizer's own design for this feature.
+    "Retractor - London":  "RSC_X_RETRACT",
+    "Retractor - Prison":  "RSC_X_RETRACT",
+    "Retractor - Florida": "RSC_X_RETRACT",
+    "Retractor - Salvage": "RSC_X_RETRACT",
+    "Retractor - Queens":  "RSC_X_RETRACT",
     # Every other one-of-a-kind item's write-target is its own canonical RSC
     # name (_UNIQUE_ITEM_RSC_NAMES above) -- seeded here so the patcher
     # (generate_output's `AP_ITEM_TO_RSC.get(item_name, item_name)`) keeps

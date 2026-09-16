@@ -412,10 +412,10 @@ class _Rules:
 
         _cadeaux_trackable: when False, falls back to the old unconditional
                             True. This matters because Cadeaux locations
-                            are only AP-tracked when Insanity ("Cadeaux Key
-                            Items") is on (see __init__.py's
-                            _cadeaux_identity_map docstring) — with
-                            Insanity off, no "Cadeaux"-family AP item exists
+                            are only AP-tracked when Cadeauxsanity is on
+                            (see __init__.py's _cadeaux_identity_map
+                            docstring) — with Cadeauxsanity off, no
+                            "Cadeaux"-family AP item exists
                             in the pool at all, so
                             state.count_group("Cadeaux", player) could
                             never reach the requirement and this location
@@ -423,7 +423,7 @@ class _Rules:
                             even though a real player can still collect the
                             (un-randomized, native) vanilla cadeaux and
                             open the door same as always. AP worlds pass
-                            self._options.insanity via BoundR — see
+                            self._options.cadeauxsanity via BoundR — see
                             BoundR.cadeaux_666() below.
         """
         if not _cadeaux_trackable:

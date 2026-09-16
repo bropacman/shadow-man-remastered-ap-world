@@ -49,8 +49,8 @@ class ShadowManLocation(Location):
 # Format: "{level_id}:{source_file}:0x{offset:04X}"
 
 # This table is the static, full AP location-ID registry — every cadeaux
-# row gets an ID here regardless of the Insanity ("Cadeaux Key Items")
-# option, same as every other category.
+# row gets an ID here regardless of the Cadeauxsanity option, same as
+# every other category.
 #
 # "barrel" ALSO reserves an ID here now (2026-08-01, Secret Trap barrel
 # promotion — was unconditionally excluded before this). Mirrors cadeaux
@@ -58,12 +58,12 @@ class ShadowManLocation(Location):
 # location — regions.py's create_regions()/_build_sub_regions() only
 # actually connects the specific loc_keys in a given world's
 # barrel_promoted_locs (see __init__.py's generate_early()), same
-# per-seed-decision pattern as cadeaux's own _SKIP_CATS/insanity gate.
+# per-seed-decision pattern as cadeaux's own _SKIP_CATS/cadeauxsanity gate.
 #
 # Whether a given world INSTANCE actually turns a cadeaux-category ID into
 # a real, reachable Location is a separate, per-seed decision made in
 # regions.py's create_regions()/_build_sub_regions() (its own _SKIP_CATS,
-# conditioned on the insanity option — see that file's comment). Keeping
+# conditioned on the cadeauxsanity option — see that file's comment). Keeping
 # the ID reserved here either way matches how AP's datapackage generally
 # works: a fixed superset of possible location IDs, with each generated
 # seed only instantiating the subset it actually uses.
