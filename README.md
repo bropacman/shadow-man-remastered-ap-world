@@ -1,5 +1,17 @@
 # Shadow Man Remastered — Archipelago World
 
+**ARCHIVED 2026-09-18 — this repo has moved.** As of the AP world's
+`v0.1.2` release, this repo's own source and history now live inside
+[`shadow-man-remastered-randomizer`](https://github.com/bropacman/shadow-man-remastered-randomizer)'s
+`apworld/` folder, merged in with full commit history preserved (`git
+subtree`) rather than kept as two separate repos. **For anything current
+— issues, the latest source, setup docs — go there.** This repo is kept
+archived (read-only) rather than deleted specifically so existing
+shortcuts and the `v0.1.0`/`v0.1.1` release download links keep working;
+nothing below this notice is being updated further.
+
+---
+
 An [Archipelago](https://archipelago.gg) multiworld implementation of
 **Shadow Man Remastered** (Nightdive Studios, 2021). This is the AP
 *world* — the plugin Archipelago's generator and client load to include
