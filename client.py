@@ -917,6 +917,11 @@ CF_FLAG_OBJ_RVA      = 0xF9C680   # DAT_140f9c680 -- the flag-manager object its
 CF_FLAG_BITS_PTR_OFF = 0x140a8    # object+0x140a8 -> m_pBits, pointer to the packed bit array
 CF_FLAG_LENGTH_OFF   = 0x140b4    # object+0x140b4 -> m_dwLength, array length in BYTES
 LIGHT_SOUL_CF_INDEX  = 226        # CF_GOT_LIGHTSOUL's index in the 140ca2a90 name table
+# CF_LIFEALTAR00..04, one per Wasteland life altar (same name table,
+# calibrated against CF_CUSTOM00=279 / CF_SAVE_LIMIT_HARD=333; see
+# docs/scope_life_altar_checks.md). Assumed set once an altar is used --
+# not yet confirmed live.
+LIFE_ALTAR_CF_INDICES = (35, 36, 37, 38, 39)
 
 # Light Soul's own physical location: save_idx=0 in locations.csv (same
 # zero-index pattern as Baton/Calabash/etc.), which excludes it from
@@ -5422,6 +5427,8 @@ class ShadowManContext(SuperContext):
     # Whether this seed's piston_combos option is on — from slot_data on
     # Connected (see on_package). Defaults False until then.
     piston_combos_on: bool
+    # PistonsRequired (1-6) from slot_data; 6 (vanilla) for older seeds.
+    pistons_required: int
     # Whether this seed's Unique Retractor Keys option is on (2026-08-18) —
     # from slot_data on Connected, same pattern as piston_combos_on. Used by
     # _go_mode_prerequisites() to show the 5 named keys individually instead
@@ -5514,6 +5521,9 @@ class ShadowManContext(SuperContext):
         self._light_soul_ap_id       = None
         self._light_soul_resolved    = False
         self._light_soul_injected_this_session = False
+        # Life Altar Checks: offering location IDs in order (empty when the
+        # option is off); see _poll_life_altars.
+        self._life_altar_ap_ids: List[int] = []
         self._live_soul_count        = None
         self.items_received_index = 0
         self.gad_powers_received  = 0
@@ -5541,6 +5551,7 @@ class ShadowManContext(SuperContext):
         self._ut_in_logic_regions = set()
         self._ut_in_logic_locations = set()
         self.piston_combos_on     = False
+        self.pistons_required     = 6
         self.unique_retractor_keys_on = False
         self._last_gad_resync_level = None
         self.trap_bonus_mode     = "always_temporary"
@@ -5764,6 +5775,8 @@ class ShadowManContext(SuperContext):
             # pattern as piston_combos_on just above (see fill_slot_data()'s
             # matching write in __init__.py).
             self.unique_retractor_keys_on = bool(slot_data.get("unique_retractor_keys", False))
+            self.pistons_required = int(slot_data.get("pistons_required", 6))
+            self._life_altar_ap_ids = [int(a) for a in slot_data.get("life_altar_ap_ids") or []]
             # Trap/Bonus (2026-08-01, renamed + generalized from "Secret
             # Trap" 2026-08-03) — see options.py's TrapBonusMode/
             # TrapBonusDuration/TrapBonus{Secrets,Health,Voodoo,Ammo}Enabled
@@ -6853,6 +6866,29 @@ class ShadowManContext(SuperContext):
         # think the light soul needs that instant poll check too") — safe
         # to call from both loops, see _fast_watcher_loop's docstring.
         await self._poll_live_light_soul(pm, base)
+
+        # ── Life Altar offerings (Life Altar Checks option) ──
+        await self._poll_life_altars(pm, base)
+
+    async def _poll_life_altars(self, pm, base: int) -> None:
+        """
+        Life Altar Checks: count the set CF_LIFEALTAR00..04 flags and send
+        offering checks 1..count. Count-based on purpose: any altar, any
+        order (docs/scope_life_altar_checks.md). Re-sending is harmless,
+        _send_location_checks_ap_ids dedupes against locations_checked.
+        """
+        if not self._life_altar_ap_ids:
+            return
+        if all(a in self.locations_checked for a in self._life_altar_ap_ids):
+            return
+        used = 0
+        for index in LIFE_ALTAR_CF_INDICES:
+            value = read_named_flag(pm, base, index)
+            if value is None:
+                return  # read failed this poll -- try again next tick
+            used += bool(value)
+        if used:
+            await self._send_location_checks_ap_ids(self._life_altar_ap_ids[:used])
 
     async def _poll_live_inventory(self, pm, base: int) -> None:
         """
@@ -9819,7 +9855,11 @@ class ShadowManContext(SuperContext):
                 prereq_total = len(prereqs)
                 prereq_done  = sum(1 for _, ok, _ in prereqs if ok)
 
-                if reached == len(blocks) and schematic_ok:
+                # PistonsRequired: the cable-car piston is free, so N
+                # pistons need N-1 of the 5 Engine Block sections
+                # (access_rules.py's pistons()).
+                blocks_needed = max(0, min(len(blocks), ctx.pistons_required - 1))
+                if reached >= blocks_needed and schematic_ok:
                     self.summary_lbl.text = "[color=00FA9A][b]Go Mode: Yes[/b][/color]"
                 else:
                     self.summary_lbl.text = (
@@ -9836,10 +9876,12 @@ class ShadowManContext(SuperContext):
                 # global item, not per-region, so it either unlocks all 5
                 # at once or none of them.
                 beatable_n = sum(1 for _, ok in blocks if ok and schematic_ok)
-                header_color = "00FA9A" if beatable_n == len(blocks) else "FFA500"
+                header_color = "00FA9A" if beatable_n >= blocks_needed else "FFA500"
+                _needed_note = ("" if blocks_needed == len(blocks)
+                                else f", {blocks_needed} needed for {ctx.pistons_required}/6 pistons")
                 self.engine_header_lbl.text = (
                     f"[b]Engine Block regions[/b]  "
-                    f"([color={header_color}]{beatable_n}/{len(blocks)}[/color] beatable)"
+                    f"([color={header_color}]{beatable_n}/{len(blocks)}[/color] beatable{_needed_note})"
                 )
                 for lbl, (name, ok) in zip(self.region_lbls, blocks):
                     if ok and schematic_ok:

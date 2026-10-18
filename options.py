@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from Options import (
     Choice,
     Toggle,
+    DefaultOnToggle,
     Range,
     DeathLink,
     PerGameCommonOptions,
@@ -476,12 +477,26 @@ class EntranceMode(Choice):
       threshold (fixed by where it actually sits in Deadside) — only where
       it leads changes.
 
-    cross_hub mode (mixing in the 5 Dark Engine soul gates too, matching the
-    standalone randomizer) is not implemented yet.
+    - cross_hub: the 9 Deadside portals and the 5 liveside soul gates are
+      shuffled together as one pool of 14, matching the standalone
+      randomizer. A Deadside portal can lead into a Dark Engine room, and a
+      liveside soul gate can lead to a Deadside level. Each return trip
+      goes back to the portal you came from. Asylum: Gateways, Wasteland
+      and Temple of Fire always stay behind a Deadside portal (Asylum
+      because liveside needs its Cathedral; the other two keep the early
+      game from depending on Night + a liveside item). Cageways and Temple
+      of Prophecy also stay behind Deadside portals unless Cadeauxsanity
+      is on with a Cadeaux Bundle Size of 5 or less: they're the biggest
+      levels, and with a small location pool, putting them behind a soul
+      gate made generation fail far more often. The Cageways tram into the
+      Engine Block is not shuffled. As with deadside_only, a small location pool (mostly
+      default options) fails generation now and then; turning on more
+      shuffles adds locations and helps.
     """
     display_name = "Entrance Mode"
     option_off = 0
     option_deadside_only = 1
+    option_cross_hub = 2
     default = 0
 
 
@@ -527,6 +542,37 @@ class Cadeauxsanity(Toggle):
     """
     display_name = "Cadeauxsanity"
     default = 0
+
+
+class LifeAltarChecks(Toggle):
+    """
+    Only applies when Cadeauxsanity is on (turned off otherwise).
+    Adds 5 checks for offering Cadeaux at the Wasteland life altars:
+    "Life Altar Offering 1" is sent after your first offering at any altar,
+    "Offering 2" after your second, and so on. The altars work as normal
+    (they still cost Altar Cadeaux Required each and grant health), except
+    they stay usable at max health (vanilla refuses at 10000), so every
+    offering can always be made; at the cap they just add no health.
+
+    In logic, offering N needs Deadside - Wasteland plus N x Altar Cadeaux
+    Required worth of Cadeaux. With Life Altar Priority on (the default),
+    they are priority locations and usually hold progression; off, they
+    only hold filler.
+    """
+    display_name = "Life Altar Checks"
+    default = 0
+
+
+class LifeAltarPriority(DefaultOnToggle):
+    """
+    Only applies when Life Altar Checks is on (turned off otherwise).
+    Makes the 5 Life Altar Offering checks priority locations, so fill puts
+    progression there when it can. To make that possible, enough Cadeaux
+    items to pay for all 5 offerings (picked largest bundle first) become
+    progression; the rest stay filler. Off: the altars only hold filler,
+    as before this option existed.
+    """
+    display_name = "Life Altar Priority"
 
 
 class CadeauxBundleSize(Range):
@@ -597,6 +643,20 @@ class PistonCombos(Toggle):
     """
     display_name = "Piston Combo Randomizer"
     default = 0
+
+
+class PistonsRequired(Range):
+    """
+    How many of the 6 Dark Engine pistons you must stop before Legion.
+    Once that many are stopped, the remaining pistons stop on their own
+    (EXE patch) and the way down to Legion opens as in vanilla. 6 is the
+    vanilla game. The cable-car piston always counts as one of them.
+    EXE patch — applied by running apply_ap_seed.py against your generated seed.
+    """
+    display_name = "Pistons Required"
+    range_start = 1
+    range_end   = 6
+    default     = 6
 
 
 class UniqueRetractorKeys(Toggle):
@@ -824,11 +884,14 @@ class ShadowManOptions(PerGameCommonOptions):
     altar_cadeaux_required:      AltarCadeauxRequired
     fogometers_cadeaux_required: FogometersCadeauxRequired
     cadeaux_gated_content:       CadeauxGatedContent
-    death_penalty:         DeathPenalty
+    life_altar_checks:           LifeAltarChecks
+    life_altar_priority:         LifeAltarPriority
+    death_penalty:        DeathPenalty
     sprint_multiplier:     SprintMultiplier
     soul_threshold_mode:   SoulThresholdMode
     soul_logic_buffer:     SoulLogicBuffer
     piston_combos:         PistonCombos
+    pistons_required:      PistonsRequired
     unique_retractor_keys: UniqueRetractorKeys
     # patch_tracker (formerly "In-Game Tracker Hints" / GUI "Teddy Bear
     # Hints") removed 2026-08-05 per Jon: turning it on could break AP

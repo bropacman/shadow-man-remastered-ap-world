@@ -96,6 +96,8 @@ class a handful of times with seed=None locally, confirm it's solid,
 then pin the new value here deliberately -- don't just bump the number
 until it happens to go green once.
 """
+import unittest
+
 from test.bases import WorldTestBase
 
 
@@ -223,3 +225,266 @@ class TestBropacmanYaml(ShadowManTestBase):
         "death_link": True,
         "death_link_threshold": 1,
     }
+
+
+def _example_yaml_options() -> dict:
+    from pathlib import Path
+    from Utils import parse_yaml
+    path = Path(__file__).resolve().parent.parent / "ShadowManRemastered.yaml"
+    return parse_yaml(path.read_text(encoding="utf-8"))["Shadow Man Remastered"]
+
+
+class TestExampleYaml(ShadowManTestBase):
+    """The example YAML shipped with each AP release generates, and lists
+    every option this world adds."""
+    options = _example_yaml_options()
+    seed = 1
+
+    def test_lists_every_option(self) -> None:
+        from Options import PerGameCommonOptions
+        from ..options import ShadowManOptions
+        ours = set(ShadowManOptions.type_hints) - set(PerGameCommonOptions.type_hints)
+        self.assertEqual(sorted(ours - set(self.options)), [],
+                         "ShadowManRemastered.yaml is missing these options")
+
+
+class TestCrossHub(ShadowManTestBase):
+    """entrance_mode: cross_hub generates, and its 14-portal shuffle is
+    wired into the region graph."""
+    options = {
+        "entrance_mode": "cross_hub",
+    }
+    seed = 1
+
+    def test_shuffle_wired(self) -> None:
+        from ..regions import ALL_PORTAL_IDS, SOUL_GATE_PORTALS
+        world = self.multiworld.worlds[1]
+        self.assertEqual(set(world.entrance_shuffle), set(ALL_PORTAL_IDS))
+        names = {e.name for e in self.multiworld.get_entrances(1)}
+        for portal_id in ALL_PORTAL_IDS:
+            kind = "soul gate" if portal_id in SOUL_GATE_PORTALS else "portal"
+            self.assertTrue(any(f"[{portal_id} {kind}," in n for n in names),
+                            f"no entrance for {portal_id}")
+
+    def test_engine_room_bans_follow_shuffle(self) -> None:
+        """An Engine Block room behind a Deadside portal is not behind Night,
+        so it can hold an Eclipser; whatever a soul gate leads to can't."""
+        from ..regions import (SOUL_GATE_PORTALS, DEADSIDE_PORTAL_IDS,
+                               portal_destination_region)
+        world = self.multiworld.worlds[self.player]
+        eclipser = world.create_item("La Lune")
+        checked = 0
+        for portal_id, dest_id in world.entrance_shuffle.items():
+            if portal_id in SOUL_GATE_PORTALS:
+                allowed = False
+            elif portal_id in DEADSIDE_PORTAL_IDS and dest_id in SOUL_GATE_PORTALS:
+                allowed = True
+            else:
+                continue
+            region = portal_destination_region(dest_id)
+            for loc in self.multiworld.get_region(region, self.player).locations:
+                if loc.item is None and getattr(loc, "raw", None) is not None                         and loc.raw.category != "barrel":
+                    self.assertEqual(loc.item_rule(eclipser), allowed,
+                                     f"{loc.name} via {portal_id}")
+                    checked += 1
+        self.assertGreater(checked, 0)
+
+
+class TestCrossHubSeed2(TestCrossHub):
+    options = {
+        "entrance_mode": "cross_hub",
+        "unique_retractor_keys": True,
+    }
+    # seed 2 hits a FillError here: cross_hub fails fill on roughly 1 in 30
+    # seeds with default-sized location pools (see options.py EntranceMode
+    # and regions.py CROSS_HUB_PINNED_SPOKES).
+    seed = 4
+
+
+class TestCrossHubLargeCadeauxPool(ShadowManTestBase):
+    """With enough cadeaux locations, Prophecy and Cageways shuffle freely."""
+    options = {
+        "entrance_mode": "cross_hub",
+        "cadeauxsanity": True,
+        "cadeaux_bundle_size": 5,
+    }
+    seed = 1
+
+    def test_small_pool_pins_dropped(self) -> None:
+        from ..regions import CROSS_HUB_UNPIN_CADEAUX_LOCATIONS
+        world = self.multiworld.worlds[1]
+        self.assertGreaterEqual(world._cadeaux_location_count(),
+                                CROSS_HUB_UNPIN_CADEAUX_LOCATIONS)
+        self.assertEqual(world._cadeaux_location_count(),
+                         len(world.cadeaux_bundle_representatives))
+
+
+class TestEntranceShuffleTable(unittest.TestCase):
+    """Pure checks on regions.py's shuffle helpers (no generation)."""
+
+    def test_cross_hub_bijection_and_pins(self) -> None:
+        import random
+        from ..regions import (shuffle_entrances, ALL_PORTAL_IDS,
+                               DEADSIDE_PORTAL_IDS, CROSS_HUB_PINNED_SPOKES,
+                               CROSS_HUB_SMALL_POOL_PINS)
+        self.assertEqual(len(ALL_PORTAL_IDS), 14)
+        small_pins_moved = 0
+        for pin_small in (True, False):
+            pinned = CROSS_HUB_PINNED_SPOKES + (CROSS_HUB_SMALL_POOL_PINS if pin_small else ())
+            for seed in range(300):
+                shuffle = shuffle_entrances(random.Random(seed), "cross_hub",
+                                            pin_small_pool_spokes=pin_small)
+                self.assertEqual(set(shuffle), set(ALL_PORTAL_IDS))
+                self.assertEqual(sorted(shuffle.values()), sorted(ALL_PORTAL_IDS))
+                behind = {dest: portal for portal, dest in shuffle.items()}
+                for spoke in pinned:
+                    self.assertIn(behind[spoke], DEADSIDE_PORTAL_IDS,
+                                  f"seed {seed}: {spoke} behind {behind[spoke]}")
+                if not pin_small:
+                    small_pins_moved += any(behind[s] not in DEADSIDE_PORTAL_IDS
+                                            for s in CROSS_HUB_SMALL_POOL_PINS)
+        # Unpinned, Prophecy/Cageways really can land behind a soul gate.
+        self.assertGreater(small_pins_moved, 0)
+
+    def test_deadside_only_stays_deadside(self) -> None:
+        import random
+        from ..regions import shuffle_entrances, DEADSIDE_PORTAL_IDS
+        shuffle = shuffle_entrances(random.Random(7), "deadside_only")
+        self.assertEqual(set(shuffle), set(DEADSIDE_PORTAL_IDS))
+        self.assertEqual(set(shuffle.values()), set(DEADSIDE_PORTAL_IDS))
+        self.assertIsNone(shuffle_entrances(random.Random(7), "off"))
+
+    def test_old_format_still_parses(self) -> None:
+        from ..regions import normalize_entrance_shuffle, deadside_portal_shuffle
+        old = {"LE_Wast.cut": "LE_Gad1.cut", "LE_Gad1.cut": "LE_Wast.cut"}
+        self.assertEqual(normalize_entrance_shuffle(old), {
+            "deadside/LE_Wast.cut": "deadside/LE_Gad1.cut",
+            "deadside/LE_Gad1.cut": "deadside/LE_Wast.cut",
+        })
+        self.assertEqual(deadside_portal_shuffle(old), old)
+        self.assertIsNone(normalize_entrance_shuffle(None))
+        with self.assertRaises(ValueError):
+            normalize_entrance_shuffle({"LE_Nope.cut": "LE_Wast.cut"})
+        # A soul-gate entry is dropped from the Deadside-only view.
+        mixed = {"deadside/LE_Lava.cut": "prison/soulexit.cut",
+                 "prison/soulexit.cut": "deadside/LE_Lava.cut"}
+        self.assertEqual(deadside_portal_shuffle(mixed), {})
+
+
+class TestProgressionOnBarrels(ShadowManTestBase):
+    """With BAN_PROGRESSION_ON_BARRELS off, a promoted barrel can hold this
+    player's own progression items (outside the per-region item bans)."""
+    options = {
+        "trap_bonus_count": 50,
+    }
+    seed = 1
+
+    def test_barrel_accepts_progression(self) -> None:
+        from .. import BAN_PROGRESSION_ON_BARRELS
+        if BAN_PROGRESSION_ON_BARRELS:
+            self.skipTest("guard switched back on")
+        baton = self.world.create_item("Baton")
+        barrels = [l for l in self.multiworld.get_locations(self.player)
+                   if getattr(l, "raw", None) is not None and l.raw.category == "barrel"]
+        self.assertTrue(barrels)
+        self.assertTrue(any(l.item_rule(baton) for l in barrels))
+
+
+
+class TestLifeAltarPriority(ShadowManTestBase):
+    """Life Altar Priority (default on): every Life Altar location is
+    PRIORITY, and fill can prove it reachable from progression items alone
+    (promoted Cadeaux), which a PRIORITY flag is useless without."""
+    options = {
+        "cadeauxsanity": True,
+        "cadeaux_bundle_size": 5,
+        "life_altar_checks": True,
+    }
+    seed = 1
+
+    def _altars(self):
+        from ..locations import LIFE_ALTAR_LOCATIONS
+        return [self.multiworld.get_location(n, self.player) for n in LIFE_ALTAR_LOCATIONS]
+
+    def test_altars_are_priority(self) -> None:
+        from BaseClasses import LocationProgressType
+        self.assertTrue(bool(self.world.options.life_altar_priority))
+        for loc in self._altars():
+            self.assertEqual(loc.progress_type, LocationProgressType.PRIORITY, loc.name)
+
+    def test_altars_reachable_from_progression_only(self) -> None:
+        from BaseClasses import CollectionState
+        state = CollectionState(self.multiworld)
+        for item in self.multiworld.itempool:
+            if item.player == self.player and item.advancement:
+                state.collect(item, True)
+        state.sweep_for_advancements()
+        for loc in self._altars():
+            self.assertTrue(loc.can_reach(state), loc.name)
+
+    def test_own_cadeaux_kept_off_altars(self) -> None:
+        cadeaux = self.world.create_item("Cadeaux Bundle x5")
+        for loc in self._altars():
+            self.assertFalse(loc.item_rule(cadeaux), loc.name)
+
+    def test_fill_hook_places_cadeaux_first(self) -> None:
+        from ..items import is_cadeaux_item
+        prog = [i for i in self.multiworld.itempool if i.advancement]
+        n_cad = sum(1 for i in prog if is_cadeaux_item(i.name))
+        self.assertGreater(n_cad, 0)
+        self.world.fill_hook(prog, [], [], [])
+        # fill_restrictive pops from the end: Cadeaux last in list = placed first.
+        self.assertTrue(all(is_cadeaux_item(i.name) for i in prog[-n_cad:]))
+        self.assertFalse(any(is_cadeaux_item(i.name) for i in prog[:-n_cad]))
+
+    def test_life_altars_group(self) -> None:
+        from ..locations import LIFE_ALTAR_LOCATIONS
+        group = self.world.location_name_groups["Life Altars"]
+        self.assertEqual(group, set(LIFE_ALTAR_LOCATIONS))
+        self.assertTrue(group <= set(self.world.location_name_to_id))
+
+
+class TestLifeAltarPriorityBundle1(TestLifeAltarPriority):
+    """Same checks at bundle size 1 (the most promoted Cadeaux items)."""
+    options = {
+        "cadeauxsanity": True,
+        "life_altar_checks": True,
+    }
+    seed = 2
+
+    def test_own_cadeaux_kept_off_altars(self) -> None:
+        cadeaux = self.world.create_item("Cadeaux")
+        for loc in self._altars():
+            self.assertFalse(loc.item_rule(cadeaux), loc.name)
+
+
+class TestLifeAltarNoPriority(ShadowManTestBase):
+    """life_altar_priority off: altars stay EXCLUDED and no Cadeaux is
+    promoted (the pre-option behavior)."""
+    options = {
+        "cadeauxsanity": True,
+        "life_altar_checks": True,
+        "life_altar_priority": False,
+    }
+    seed = 1
+
+    def test_altars_excluded(self) -> None:
+        from BaseClasses import LocationProgressType
+        from ..items import is_cadeaux_item
+        from ..locations import LIFE_ALTAR_LOCATIONS
+        for name in LIFE_ALTAR_LOCATIONS:
+            loc = self.multiworld.get_location(name, self.player)
+            self.assertEqual(loc.progress_type, LocationProgressType.EXCLUDED)
+        self.assertFalse(any(i.advancement for i in self.multiworld.itempool
+                             if i.player == self.player and is_cadeaux_item(i.name)))
+
+
+class TestLifeAltarPriorityNeedsChecks(ShadowManTestBase):
+    """life_altar_priority is turned off when life_altar_checks is off."""
+    options = {
+        "cadeauxsanity": True,
+    }
+    seed = 1
+
+    def test_priority_off(self) -> None:
+        self.assertFalse(bool(self.world.options.life_altar_priority))

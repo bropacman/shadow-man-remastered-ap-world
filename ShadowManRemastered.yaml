@@ -43,8 +43,11 @@ Shadow Man Remastered:
   # -1 leaves the preset's own baked-in value alone.
   open_gates_n: -1
 
-  # Shuffles which Deadside portal leads where. off (vanilla) |
-  # deadside_only (the 9 Deadside hub portals shuffled among themselves).
+  # Shuffles which portal leads where. off (vanilla) |
+  # deadside_only (the 9 Deadside hub portals shuffled among themselves) |
+  # cross_hub (the 9 Deadside portals and the 5 liveside soul gates
+  # shuffled together; Asylum, Wasteland and Temple of Fire stay behind
+  # Deadside portals).
   entrance_mode: "off"
 
   # How aggressively key items are pushed toward deeper locations (0-100).
@@ -68,6 +71,16 @@ Shadow Man Remastered:
   # combinations in the in-game journal before reaching Legion).
   piston_combos: false
 
+  # How many of the 6 Dark Engine pistons you must stop before Legion
+  # (1-6). Once that many are stopped the rest stop on their own and the
+  # way down to Legion opens. 6 (default) is the vanilla game.
+  pistons_required: 6
+
+  # Split the 5 Retractors into one named key per liveside region
+  # ("Retractor - London", "Retractor - Prison", ...); each schism then
+  # needs its own key instead of any 5 of the shared stack.
+  unique_retractor_keys: false
+
   # Whether cadeaux (statue/altar) locations exist as AP checks at all.
   # Off (default): ~657 cadeaux locations are excluded entirely — no
   # checks, no hints, no "Cadeaux" item in the pool. On: they become real
@@ -83,6 +96,19 @@ Shadow Man Remastered:
   # Whether the Fogometers Light Soul location (SL10 + enough Cadeaux)
   # exists as an AP check. Only meaningful when cadeauxsanity is also on.
   cadeaux_gated_content: false
+
+  # 5 checks for offering Cadeaux at the Wasteland life altars, sent as
+  # you make your 1st..5th offering (any altar, any order). Each needs N x
+  # altar_cadeaux_required Cadeaux in logic. Only meaningful when
+  # cadeauxsanity is also on. The location group "Life Altars" names all 5,
+  # e.g. exclude_locations: ["Life Altars"].
+  life_altar_checks: false
+
+  # Makes the Life Altar checks priority locations, so they usually hold
+  # progression; enough Cadeaux to pay for all 5 offerings become
+  # progression items to allow it. Off: the altars only hold filler. Only
+  # meaningful when life_altar_checks is also on.
+  life_altar_priority: true
 
   # ── Cosmetic / optional shuffles ─────────────────────────────────────
   # Shuffle weapons into the pool. Off leaves them at vanilla locations.
@@ -138,6 +164,10 @@ Shadow Man Remastered:
   # Shuffle enemy pain/startle/attack sounds between enemy types.
   # Cosmetic only.
   shuffle_enemies_sfx: false
+
+  # Shuffle Shadow Man's voice lines and enemy sounds as one shared pool.
+  # Needs shuffle_voices and shuffle_enemies_sfx both on. Cosmetic only.
+  combine_voice_and_enemy_sfx: false
 
   # Shuffle level skyboxes between levels. Cosmetic only.
   shuffle_sky: false
@@ -220,3 +250,9 @@ Shadow Man Remastered:
   #   start_inventory_from_pool:
   #     Gad Power: 3
   start_inventory_from_pool: {}
+
+  # Keep important items off specific locations. Locations use the names
+  # shown in the tracker, hints and spoiler log ("<Region> - <spot>"):
+  #   exclude_locations:
+  #     - "Asylum: Experimentation Rooms - Level Entrance Under Cable Car Barrel 1"
+  exclude_locations: []
